@@ -1,12 +1,11 @@
 #include <iostream>
-#include <functional>
+#include <vector>
+#include <glm/glm.hpp>
 
 #include "util.h"
 #include "init.h"
 #include "allocator.h"
 
-//SETUP AND TEARDOWN
-//===================================================================================================================
 void Allocator::init(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device) {
 	_device = device;
 
@@ -14,8 +13,9 @@ void Allocator::init(VkInstance instance, VkPhysicalDevice physicalDevice, VkDev
 	allocatorInfo.physicalDevice = physicalDevice;
 	allocatorInfo.device = device;
 	allocatorInfo.instance = instance;
+	allocatorInfo.vulkanApiVersion = VK_API_VERSION_1_4;
 	allocatorInfo.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT; //Allows us to use device pointers
-	vmaCreateAllocator(&allocatorInfo, &_allocator);
+	VK_CHECK(vmaCreateAllocator(&allocatorInfo, &_allocator));
 }
 
 void Allocator::setCommandInfo(VkQueue queue, VkCommandBuffer commandBuffer, VkFence fence) {
@@ -53,23 +53,45 @@ void Allocator::immediateSubmit(std::function<void(VkCommandBuffer commandBuffer
 	VK_CHECK(vkWaitForFences(_device, 1, &_immFence, true, 9999999999));
 }
 
-AllocatedBuffer Allocator::createBuffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage, bool createMapping /* = false */) {
+AllocatedBuffer Allocator::createBuffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage, bool createMapping /* = false */, size_t minAlignment /*= 0*/ ) {
 	VkBufferCreateInfo bufferInfo{};
 	bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
 	bufferInfo.pNext = nullptr;
 	bufferInfo.size = allocSize;
-	bufferInfo.usage = usage;
+	bufferInfo.usage = usage | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT; //Exposes a GPU pointer that the shader can use directly, instead of a descriptor
 
 	VmaAllocationCreateInfo vmaAllocInfo{};
 	vmaAllocInfo.usage = memoryUsage; //The usage flags influences where VMA places our buffer
 	vmaAllocInfo.flags = createMapping ? VMA_ALLOCATION_CREATE_MAPPED_BIT : 0; //Create memory mapped to the CPU's address space (like vkMapMemory)
 	//The mapping isn't automatically kept consistent, for performance reasons
-	AllocatedBuffer newBuffer;
+	AllocatedBuffer newBuffer{};
 
-	VK_CHECK(vmaCreateBuffer(_allocator, &bufferInfo, &vmaAllocInfo, &newBuffer.buffer, &newBuffer.allocation, &newBuffer.info));
+	//Some structs in Vulkan (e.g. acceleration structures) have alignment requirements
+	if (minAlignment == 0) VK_CHECK(vmaCreateBuffer(_allocator, &bufferInfo, &vmaAllocInfo, &newBuffer.buffer, &newBuffer.allocation, &newBuffer.info));
+	else VK_CHECK(vmaCreateBufferWithAlignment(_allocator, &bufferInfo, &vmaAllocInfo, minAlignment, &newBuffer.buffer, &newBuffer.allocation, &newBuffer.info));
 
 	VkBufferDeviceAddressInfo info = { .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, .buffer = newBuffer.buffer };
 	newBuffer.address = vkGetBufferDeviceAddress(_device, &info);
+
+	return newBuffer;
+}
+
+AllocatedBuffer Allocator::uploadBuffer(void *data, size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage, bool createMapping /*= true*/, size_t minAlignment /*= 0*/) {
+	AllocatedBuffer newBuffer = createBuffer(std::max<size_t>(allocSize, 1), usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT, memoryUsage, createMapping, minAlignment);
+	if (allocSize == 0) return newBuffer;
+
+	AllocatedBuffer stagingBuffer = createBuffer(allocSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU, true, minAlignment);
+	memcpy(stagingBuffer.info.pMappedData, data, allocSize);
+
+	immediateSubmit([&](VkCommandBuffer commandBuffer) {
+		//Copy the staging buffer to the buffer
+		size_t offset = 0;
+		VkBufferCopy copy{};
+		copy.dstOffset = 0; copy.srcOffset = offset; copy.size = allocSize;
+		vkCmdCopyBuffer(commandBuffer, stagingBuffer.buffer, newBuffer.buffer, 1, &copy);
+		});
+
+	destroyBuffer(stagingBuffer);
 
 	return newBuffer;
 }
@@ -78,8 +100,12 @@ void Allocator::destroyBuffer(const AllocatedBuffer &buffer) {
 	vmaDestroyBuffer(_allocator, buffer.buffer, buffer.allocation);
 }
 
+//Propagates changes to CPU-side mapped memory to the GPU
+void Allocator::flush(const AllocatedBuffer &buffer) {
+	vmaFlushAllocation(_allocator, buffer.allocation, 0, VK_WHOLE_SIZE);
+}
 
-AllocatedImage Allocator::createImage(VkExtent3D extent, VkFormat format, VkImageUsageFlags usage, bool mipmaps /*= false*/ ) {
+AllocatedImage Allocator::createImage(VkExtent3D extent, VkFormat format, VkImageUsageFlags usage, bool mipmaps /*= false*/, VkImageViewCreateInfo *imageViewInfoSave /*= nullptr*/ ) {
 	AllocatedImage newImage;
 	newImage.imageFormat = format;
 	newImage.imageExtent = extent;
@@ -100,18 +126,20 @@ AllocatedImage Allocator::createImage(VkExtent3D extent, VkFormat format, VkImag
 	VkImageViewCreateInfo imageViewInfo = init::imageViewCreateInfo(format, newImage.image, aspectFlag);
 	imageViewInfo.subresourceRange.levelCount = imageInfo.mipLevels;
 
+	if (imageViewInfoSave) *imageViewInfoSave = imageViewInfo;
+
 	VK_CHECK(vkCreateImageView(_device, &imageViewInfo, nullptr, &newImage.imageView));
 	return newImage;
 }
 
-AllocatedImage Allocator::createImage(void *data, VkExtent3D extent, VkFormat format, VkImageUsageFlags usage, bool mipmaps = false) {
+AllocatedImage Allocator::createImage(const void *data, VkExtent3D extent, VkFormat format, VkImageUsageFlags usage, bool mipmaps /*= false*/, VkImageViewCreateInfo *imageViewInfoSave /*= nullptr*/ ) {
 	size_t dataSize = extent.width * extent.height * extent.depth * 4; //We're assuming 8-bit RGBA channels
 
 	AllocatedBuffer stagingBuffer = createBuffer(dataSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 	memcpy(stagingBuffer.info.pMappedData, data, dataSize);
 
 
-	AllocatedImage newImage = createImage(extent, format, usage | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, mipmaps);
+	AllocatedImage newImage = createImage(extent, format, usage | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, mipmaps, imageViewInfoSave);
 	immediateSubmit([&](VkCommandBuffer commandBuffer) {
 		util::transitionImageLayout(commandBuffer, newImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 

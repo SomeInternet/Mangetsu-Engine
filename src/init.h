@@ -16,7 +16,7 @@ namespace init {
         return info;
 	}
 
-    VkFenceCreateInfo fenceCreateInfo(VkFenceCreateFlags flags = 0) {
+    constexpr VkFenceCreateInfo fenceCreateInfo(VkFenceCreateFlags flags = 0) {
         VkFenceCreateInfo info{};
 
         info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
@@ -26,7 +26,7 @@ namespace init {
         return info;
     }
 
-    VkSemaphoreCreateInfo semaphoreCreateInfo(VkSemaphoreCreateFlags flags = 0) {
+    constexpr VkSemaphoreCreateInfo semaphoreCreateInfo(VkSemaphoreCreateFlags flags = 0) {
         VkSemaphoreCreateInfo info{};
 
         info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -36,7 +36,7 @@ namespace init {
         return info;
     }
 
-    VkCommandBufferBeginInfo commandBufferBeginInfo(VkCommandBufferUsageFlags flags = 0) {
+    constexpr VkCommandBufferBeginInfo commandBufferBeginInfo(VkCommandBufferUsageFlags flags = 0) {
         VkCommandBufferBeginInfo info{};
 
         info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -47,7 +47,7 @@ namespace init {
         return info;
     }
 
-    VkCommandBufferSubmitInfo commandBufferSubmitInfo(VkCommandBuffer cmd) {
+    constexpr VkCommandBufferSubmitInfo commandBufferSubmitInfo(VkCommandBuffer cmd) {
         VkCommandBufferSubmitInfo info{};
         info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
         info.pNext = nullptr;
@@ -57,7 +57,7 @@ namespace init {
         return info;
     }
 
-    VkSubmitInfo2 submitInfo(VkCommandBufferSubmitInfo *cmd, VkSemaphoreSubmitInfo *signalSemaphoreInfo,
+    constexpr VkSubmitInfo2 submitInfo(VkCommandBufferSubmitInfo *cmd, VkSemaphoreSubmitInfo *signalSemaphoreInfo,
         VkSemaphoreSubmitInfo *waitSemaphoreInfo, uint32_t signalSemaphoreInfoCount = 1, uint32_t waitSemaphoreInfoCount = 1) {
         VkSubmitInfo2 info{};
 
@@ -78,7 +78,7 @@ namespace init {
         return info;
     }
 
-    VkImageCreateInfo imageCreateInfo(VkFormat format, VkImageUsageFlags usageFlags, VkExtent3D extent) {
+    constexpr VkImageCreateInfo imageCreateInfo(VkFormat format, VkImageUsageFlags usageFlags, VkExtent3D extent) {
         VkImageCreateInfo info{};
 
         info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -94,7 +94,7 @@ namespace init {
         return info;
     }
 
-    VkImageSubresourceRange imageSubresourceRange(VkImageAspectFlags aspectMask) {
+    constexpr VkImageSubresourceRange imageSubresourceRange(VkImageAspectFlags aspectMask) {
         VkImageSubresourceRange subImage{};
 
         subImage.aspectMask = aspectMask;
@@ -106,7 +106,7 @@ namespace init {
         return subImage;
     }
 
-    VkImageViewCreateInfo imageViewCreateInfo(VkFormat format, VkImage image, VkImageAspectFlags aspectFlags) {
+    constexpr VkImageViewCreateInfo imageViewCreateInfo(VkFormat format, VkImage image, VkImageAspectFlags aspectFlags) {
         VkImageViewCreateInfo info{};
 
         info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -119,6 +119,16 @@ namespace init {
         info.subresourceRange.levelCount = 1;
         info.subresourceRange.baseArrayLayer = 0;
         info.subresourceRange.layerCount = 1;
+        return info;
+    }
+
+    constexpr VkSemaphoreSubmitInfo semaphoreSubmitInfo(VkPipelineStageFlags2 stageMask, VkSemaphore semaphore) {
+        VkSemaphoreSubmitInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+        info.pNext = nullptr;
+        info.semaphore = semaphore;
+        info.stageMask = stageMask;
+        info.value = 0;
         return info;
     }
 };

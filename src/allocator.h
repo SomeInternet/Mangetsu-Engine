@@ -1,5 +1,6 @@
 #pragma once
 #include <vk_mem_alloc.h>
+#include <functional>
 
 struct AllocatedBuffer {
 	VkBuffer buffer;
@@ -28,12 +29,15 @@ public:
 	void immediateSubmit(std::function<void(VkCommandBuffer commandBuffer)> &&function);
 
 	//Buffers
-	AllocatedBuffer createBuffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage, bool createMapping = true);
+	AllocatedBuffer createBuffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage, bool createMapping = true, size_t minAlignment = 0);
+	AllocatedBuffer uploadBuffer(void *data, size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage, bool createMapping = true, size_t minAlignment = 0);
 	void destroyBuffer(const AllocatedBuffer &buffer);
 
+	void flush(const AllocatedBuffer &buffer);
+
 	//Images
-	AllocatedImage createImage(VkExtent3D extent, VkFormat format, VkImageUsageFlags usage, bool mipmaps = false);
-	AllocatedImage createImage(void *data, VkExtent3D extent, VkFormat format, VkImageUsageFlags usage, bool mipmaps = false);
+	AllocatedImage createImage(VkExtent3D extent, VkFormat format, VkImageUsageFlags usage, bool mipmaps = false, VkImageViewCreateInfo *imageViewInfoSave = nullptr);
+	AllocatedImage createImage(const void *data, VkExtent3D extent, VkFormat format, VkImageUsageFlags usage, bool mipmaps = false, VkImageViewCreateInfo *imageViewInfoSave = nullptr);
 	void destroyImage(const AllocatedImage &image);
 
 private:
