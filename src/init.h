@@ -131,4 +131,38 @@ namespace init {
         info.value = 0;
         return info;
     }
+
+    constexpr VkRenderingAttachmentInfo renderingAttachmentInfo(VkImageView imageView, VkClearValue *clearValue, VkImageLayout imageLayout) {
+        VkRenderingAttachmentInfo colorAttachment{};
+        colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        colorAttachment.pNext = nullptr;
+
+        colorAttachment.imageView = imageView;
+        colorAttachment.imageLayout = imageLayout;
+        colorAttachment.loadOp = clearValue ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD; //If we have a clear value, then clear the image, else load it, keeping the existing data
+        colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        if (clearValue) {
+            colorAttachment.clearValue = *clearValue;
+        }
+
+        return colorAttachment;
+    }
+
+    constexpr VkRenderingInfo renderingInfo(VkExtent2D renderExtent, VkRenderingAttachmentInfo *colorAttachment,
+        VkRenderingAttachmentInfo *depthAttachment) {
+        VkRenderingInfo renderInfo{};
+
+        renderInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+        renderInfo.pNext = nullptr;
+
+        //RenderArea bounds both the viewport and the scissors
+        renderInfo.renderArea = VkRect2D{ VkOffset2D { 0, 0 }, renderExtent };
+        renderInfo.layerCount = 1;
+        renderInfo.colorAttachmentCount = 1;
+        renderInfo.pColorAttachments = colorAttachment;
+        renderInfo.pDepthAttachment = depthAttachment;
+        renderInfo.pStencilAttachment = nullptr;
+
+        return renderInfo;
+    }
 };

@@ -39,9 +39,9 @@ struct SubMesh {
 };
 
 struct DeviceSubMesh {
-	VkDeviceAddress pos;
-	VkDeviceAddress vertex;
-	VkDeviceAddress index;
+	VkDeviceAddress posBuffer;
+	VkDeviceAddress vertexBuffer;
+	VkDeviceAddress indexBuffer;
 
 	int materialIdx{ -1 };
 	int padding;
@@ -66,29 +66,29 @@ struct Texture {
 	int samplerIdx{ -1 };
 };
 
+struct Instance {
+	glm::mat4 transform;
+	uint32_t mesh;
+};
+
 struct Scene {
 	bool loaded{ false };
 
-	AllocatedBuffer materials;
+	AllocatedBuffer materialBuffer;
 
 	std::vector<Mesh> meshes;
+
+	AllocatedBuffer subMeshBuffer; //Flat buffer containing the corresponding DeviceSubMeshes of the meshes
 
 	std::vector<VkSamplerCreateInfo> samplerCreateInfos; //Descriptor heaps allocate the samplers from the create infos
 	std::vector<VkImageViewCreateInfo> imageViewCreateInfos; //Descriptor heaps allocate image views from the create infos
 
 	std::vector<AllocatedImage> images;
 
-	//Buffers for the descriptor heaps for the samplers and images
-	AllocatedBuffer samplerHeap;
-	AllocatedBuffer imageHeap;
+	AllocatedBuffer instanceBuffer;
 
 	std::vector<Texture> textures;
 	AllocatedBuffer textureBuffer;
 
 	AccelerationStructure tlas{};
-};
-
-struct Instance {
-	glm::mat4 transform;
-	uint32_t mesh;
 };

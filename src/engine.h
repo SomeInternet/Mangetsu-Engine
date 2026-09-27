@@ -6,9 +6,14 @@
 #include <SDL3/SDL_vulkan.h>
 #include <VkBootstrap.h>
 
+#include "imgui.h"
+#include "backends/imgui_impl_sdl3.h"
+#include "backends/imgui_impl_vulkan.h"
+
 #include "geometry.h"
 #include "util.h"
 #include "allocator.h"
+#include "camera.h"
 
 struct FrameResources {
 	VkCommandPool _commandPool{ VK_NULL_HANDLE };
@@ -35,11 +40,14 @@ struct DeviceProperties {
 constexpr int WIDTH = 1920;
 constexpr int HEIGHT = 1080;
 
+constexpr int MAX_SWAPCHAIN_SIZE = 4;
 constexpr int FRAMES_IN_FLIGHT = 3;
 
 constexpr int ENGINE_IMAGES = 1;
 constexpr int N_IMAGE_DESCRIPTORS = 4096;
 constexpr int N_SAMPLER_DESCRIPTORS = 256;
+
+constexpr int MAX_BOUNCES = 10;
 
 class Engine {
 private:
@@ -58,6 +66,7 @@ private:
 	VkFormat _swapChainImageFormat;
 	std::vector<VkImage> _swapChainImages;
 	std::vector<VkImageView> _swapChainImageViews;
+	std::vector<VkImageViewCreateInfo> _swapChainImageViewCreateInfos;
 
 	VkQueue _queue;
 	uint32_t _queueFamilyIdx;
@@ -66,7 +75,8 @@ private:
 	VkCommandPool _immCommandPool;
 	VkCommandBuffer _immCommandBuffer;
 
-	VkPipeline _pipelinePathtraced;
+	VkPipeline _pipelinePathtracer;
+	VkPipeline _pipelinePost;
 
 	VkbData _vkbData;
 
@@ -95,8 +105,22 @@ private:
 	HeapLayout _imageHeapLayout;
 	AllocatedBuffer _imageHeap;
 
+	ImGuiIO *_io{ nullptr };
+	Camera _camera{};
+
 	//Vulkan raytracing objects
 	Scene _scene{};
+
+	//For the shader binding table
+	VkStridedDeviceAddressRegionKHR _rayGenerationRegion{};
+	VkStridedDeviceAddressRegionKHR _missRegion{};
+	VkStridedDeviceAddressRegionKHR _hitRegion{};
+	VkStridedDeviceAddressRegionKHR _callRegion{};
+
+	AllocatedBuffer _sbtBuffer;
+
+	AllocatedImage _radianceImage;
+	VkImageViewCreateInfo _radianceImageViewCreateInfo;
 
 	//Deletion queue to handle object destruction
 	//TODO: VkGuide, from which I got this implementation, mentioned a better way to do it, so that's something I might want to look into
@@ -104,7 +128,15 @@ private:
 
 	void initWindow();
 	void initVulkan();
+
 	void createSwapChain(int width, int height);
+	void destroySwapChain();
+	void initSwapChainDescriptors();
+
+	void createRadianceImage();
+	void initRadianceImageDescriptors();
+	void destroyRadianceImage();
+
 	void initCommandResources();
 	void initSyncStructures();
 
@@ -112,15 +144,21 @@ private:
 	void writeSceneDescriptors();
 	void writeImageDescriptor(uint32_t slot, const VkImageViewCreateInfo &viewInfo, VkDescriptorType type, VkImageLayout layout);
 
-	void loadScene(std::string &file);
+	void initImgui();
 
-	void initPipelinePathtraced();
+	void loadScene(const std::string &file);
+
+	void initPipelinePathtracer();
+	void initPipelinePost();
+
+	void drawImgui(VkCommandBuffer commandBuffer, VkImageView targetImageView);
 	void draw();
 
-	void destroySwapChain();
+	void resize();
 
 	int _frameNum{ 0 };
 	bool _resize{ false };
+	bool _minimized{ false };
 
 	//Helpers
 	inline FrameResources &getCurrFrame() { return _frameResources[_frameNum % FRAMES_IN_FLIGHT]; }

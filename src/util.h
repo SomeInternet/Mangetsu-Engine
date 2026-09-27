@@ -60,5 +60,8 @@ struct HeapLayout {
 namespace util {
 	void transitionImageLayout(VkCommandBuffer commandBuffer, VkImage image, VkImageLayout currLayout, VkImageLayout newLayout);
 
+	VkShaderModule loadShaderModule(const char *filePath, VkDevice device);
+
+	//Rounds v up to the next power of a. Used to align an offset with an alignment (which will be a power of 2)
 	constexpr VkDeviceSize alignUp(VkDeviceSize v, VkDeviceSize a) { return (v + a - 1) & ~(a - 1); }
 };

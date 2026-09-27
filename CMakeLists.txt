@@ -78,7 +78,78 @@ if(NOT MANGETSU_SOURCES)
     message(FATAL_ERROR "No sources found in ${CMAKE_CURRENT_SOURCE_DIR}/src")
 endif()
 
-add_executable(Mangetsu-Engine ${MANGETSU_SOURCES})
+# ---------------------------------------------------------------------------
+# Shaders
+# ---------------------------------------------------------------------------
+#
+# Every shaders/*.slang is compiled by slangc into one SPIR-V module holding all
+# of its entry points; -fvk-use-entrypoint-name keeps their source names (e.g.
+# rayGeneration, closestHit) instead of renaming each one to "main", which would
+# collide as soon as a file has more than one. The output goes to
+# build/shaders/<name>.spv, which the engine sees as MANGETSU_SHADER_DIR.
+#
+# -fvk-use-scalar-layout makes buffers and pointers use scalar block layout
+# (VK_EXT_scalar_block_layout, core in Vulkan 1.2), so the host-side structs
+# must be laid out the same way -- no std140/std430 padding.
+
+# slangc ships in the Vulkan SDK's Bin directory.
+find_program(MANGETSU_SLANGC slangc
+    HINTS $ENV{VULKAN_SDK}/Bin ${Vulkan_INCLUDE_DIR}/../Bin
+    REQUIRED
+)
+
+set(MANGETSU_SLANG_FLAGS
+    -target spirv
+    -fvk-use-scalar-layout
+    -fvk-use-entrypoint-name
+    -capability spvShaderInvocationReorderEXT #Allows for SER
+    -g    # Debug info so RenderDoc / Nsight can show Slang source.
+)
+
+file(GLOB_RECURSE MANGETSU_SHADER_SOURCES CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.slang
+)
+
+set(MANGETSU_SHADER_DIR ${CMAKE_BINARY_DIR}/shaders)
+set(MANGETSU_SHADER_OUTPUTS "")
+
+foreach(shader IN LISTS MANGETSU_SHADER_SOURCES)
+    # Files without a [shader(...)] entry point are modules meant to be
+    # imported; slangc refuses to emit SPIR-V for them on their own. They still
+    # show up in the Solution Explorer, and their importers' depfiles track them.
+    # (Giving a module its first entry point needs a CMake re-configure.)
+    file(STRINGS ${shader} entry_points REGEX "\\[shader\\(")
+    if(NOT entry_points)
+        continue()
+    endif()
+
+    get_filename_component(name ${shader} NAME_WE)
+    set(spv ${MANGETSU_SHADER_DIR}/${name}.spv)
+
+    # MAIN_DEPENDENCY hangs the rule on the .slang file itself in Visual Studio,
+    # so a shader can be recompiled on its own from the Solution Explorer. The
+    # depfile tracks imported modules, so editing one rebuilds its importers.
+    add_custom_command(
+        OUTPUT ${spv}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${MANGETSU_SHADER_DIR}
+        COMMAND ${MANGETSU_SLANGC} ${shader} ${MANGETSU_SLANG_FLAGS}
+                -o ${spv} -depfile ${spv}.d
+        MAIN_DEPENDENCY ${shader}
+        DEPFILE ${spv}.d
+        COMMENT "Compiling shader ${name}.slang"
+        VERBATIM
+    )
+
+    list(APPEND MANGETSU_SHADER_OUTPUTS ${spv})
+endforeach()
+
+# The .spv outputs have to be target sources too: that is what makes Ninja run
+# the rules at all (Visual Studio would manage with MAIN_DEPENDENCY alone).
+add_executable(Mangetsu-Engine
+    ${MANGETSU_SOURCES}
+    ${MANGETSU_SHADER_SOURCES}
+    ${MANGETSU_SHADER_OUTPUTS}
+)
 
 target_include_directories(Mangetsu-Engine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
@@ -100,6 +171,7 @@ target_compile_definitions(Mangetsu-Engine
         GLM_FORCE_RADIANS
         GLM_ENABLE_EXPERIMENTAL
         MANGETSU_ASSET_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+        MANGETSU_SHADER_DIR="${MANGETSU_SHADER_DIR}"
         $<$<CONFIG:Debug>:MANGETSU_DEBUG>
 )
 
@@ -111,6 +183,8 @@ endif()
 
 # Mirror the on-disk layout in the Visual Studio solution explorer.
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}/src PREFIX "src" FILES ${MANGETSU_SOURCES})
+source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}/shaders PREFIX "shaders" FILES ${MANGETSU_SHADER_SOURCES})
+source_group(TREE ${MANGETSU_SHADER_DIR} PREFIX "shaders/spirv" FILES ${MANGETSU_SHADER_OUTPUTS})
 
 # Make F5 work out of the box: Mangetsu-Engine is the startup project and it
 # runs from the repo root, so "shaders/..." and "models/..." resolve.

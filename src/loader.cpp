@@ -5,6 +5,7 @@
 
 #include <tiny_gltf.h>
 #include <unordered_set>
+#include <glm/gtc/type_ptr.hpp>
 
 #include "stb_image.h"
 
@@ -26,8 +27,75 @@ static glm::uint32 octahedral(glm::vec3 v) {
     return glm::packHalf2x16(newV);
 }
 
+//Helper to create the logical outline of the acceleration structure and the scratch buffer
+//Color me surprised at how readable this is
+static AccelerationStructure createAccelerationStructure(vkb::DispatchTable &dispatchTable, Allocator &allocator, DeviceProperties &deviceProperties,
+    VkAccelerationStructureBuildGeometryInfoKHR &buildInfo, uint32_t *maxPrimitiveCounts, AllocatedBuffer &scratchBuffer) {
+
+    VkAccelerationStructureBuildSizesInfoKHR sizes{ .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR };
+    dispatchTable.getAccelerationStructureBuildSizesKHR(VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildInfo, maxPrimitiveCounts, &sizes);
+
+    AccelerationStructure newAS{};
+    newAS.buffer = allocator.createBuffer(sizes.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR, VMA_MEMORY_USAGE_GPU_ONLY, false);
+    
+    VkAccelerationStructureCreateInfoKHR createInfo{ .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR };
+    createInfo.buffer = newAS.buffer.buffer;
+    createInfo.size = sizes.accelerationStructureSize;
+    createInfo.type = buildInfo.type;
+
+    VK_CHECK(dispatchTable.createAccelerationStructureKHR(&createInfo, nullptr, &newAS.as));
+    VkAccelerationStructureDeviceAddressInfoKHR addressInfo{ .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR };
+    addressInfo.accelerationStructure = newAS.as;
+    newAS.address = dispatchTable.getAccelerationStructureDeviceAddressKHR(&addressInfo);
+
+    scratchBuffer = allocator.createBuffer(sizes.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY, false,
+        deviceProperties.asProperties.minAccelerationStructureScratchOffsetAlignment);
+
+    buildInfo.dstAccelerationStructure = newAS.as;
+    buildInfo.scratchData.deviceAddress = scratchBuffer.address;
+    return newAS;
+}
+
+//Helper to parse the local transform matrix of a node in the scene graph
+static glm::mat4 parseLocalTransform(const tinygltf::Node &node) {
+    if (node.matrix.size() == 16) return glm::mat4(glm::make_mat4(node.matrix.data()));
+
+    //Transformations specified T-R-S
+    glm::mat4 transform(1.f);
+    if (node.translation.size() == 3) { //X, Y, Z displacement
+        transform = glm::translate(transform, glm::vec3(node.translation[0], node.translation[1], node.translation[2]));
+    }
+
+    if (node.rotation.size() == 4) { //Axis-angle rotation
+        glm::quat rot = glm::quat(node.rotation[3], node.rotation[0], node.rotation[1], node.rotation[2]);
+        transform *= glm::toMat4(rot);
+    }
+
+    if (node.scale.size() == 3) { //X, Y, Z scale
+        transform = glm::scale(transform, glm::vec3(node.scale[0], node.scale[1], node.scale[2]));
+    }
+
+    return transform;
+}
+
+static void traverseSceneGraph(const tinygltf::Model &model, int nodeIdx, const glm::mat4 &parentMatrix, std::vector<Instance> &instances) {
+    const tinygltf::Node &node = model.nodes[nodeIdx];
+    glm::mat4 worldMatrix = parentMatrix * parseLocalTransform(node);
+
+    if (node.mesh >= 0) {
+        Instance instance{};
+        instance.transform = worldMatrix;
+        instance.mesh = node.mesh;
+        instances.push_back(instance);
+    }
+
+    //Recurse on children
+    for (int childIdx : node.children) traverseSceneGraph(model, childIdx, worldMatrix, instances);
+}
+
 //Adapted from the Vulkan docs tutorial
-Scene loader::loadScene(VkDevice &device, Allocator &allocator, const std::string &file, vkb::DispatchTable &dispatchTable) {
+Scene loader::loadScene(VkDevice &device, Allocator &allocator, const std::string &file, 
+    DeviceProperties &deviceProperties, vkb::DispatchTable &dispatchTable) {
 	tinygltf::Model model;
 	tinygltf::TinyGLTF loader;
 
@@ -47,8 +115,12 @@ Scene loader::loadScene(VkDevice &device, Allocator &allocator, const std::strin
 		Mesh newMesh{};
 
 		for (const auto &subMesh : mesh.primitives) {
-            if (subMesh.mode != TINYGLTF_MODE_TRIANGLES) continue;
             SubMesh newSubMesh{};
+
+            if (subMesh.mode != TINYGLTF_MODE_TRIANGLES) {
+                newMesh.subMeshes.push_back(newSubMesh);
+                continue;
+            }
 
             std::vector<Vertex> vertices;
             std::vector<glm::vec3> pos;
@@ -103,7 +175,8 @@ Scene loader::loadScene(VkDevice &device, Allocator &allocator, const std::strin
                 Vertex newVertex{};
 
                 if (hasUvs) {
-                    const float *uv = reinterpret_cast<const float *>(&uvBuffer->data[uvBufferView->byteOffset + uvAccessor->byteOffset + i * 8]);
+                    if (uvAccessor->componentType != TINYGLTF_COMPONENT_TYPE_FLOAT) throw std::runtime_error("UV's must be floats!");
+                    const float *uv = reinterpret_cast<const float *>(&uvBuffer->data[uvBufferView->byteOffset + uvAccessor->byteOffset + i * uvAccessor->ByteStride(*uvBufferView)]);
                     newVertex.uv = glm::packHalf2x16(glm::vec2(uv[0], uv[1]));
                 }
 
@@ -187,6 +260,7 @@ Scene loader::loadScene(VkDevice &device, Allocator &allocator, const std::strin
             }
             else { //subMesh doesn't have indices
                 indices.reserve(posAccessor.count);
+                newSubMesh.indexCount = posAccessor.count;
                 for (int i = 0; i < posAccessor.count; ++i) indices.push_back(i);
             }
 
@@ -267,35 +341,12 @@ Scene loader::loadScene(VkDevice &device, Allocator &allocator, const std::strin
 
         materials.push_back(newMaterial);
     }
-    newScene.materials = allocator.uploadBuffer(materials.data(), materials.size() * sizeof(Material), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+    newScene.materialBuffer = allocator.uploadBuffer(materials.data(), materials.size() * sizeof(Material), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
         VMA_MEMORY_USAGE_GPU_ONLY);
 
     //Load the samplers
     {
-        newScene.samplerCreateInfos.reserve(model.samplers.size());
-        std::vector<VkHostAddressRangeEXT> hostAddressRanges;
-        hostAddressRanges.reserve(model.samplers.size() + 1);
-
-        size_t stride = util::alignUp(properties.dhProperties.samplerDescriptorSize, properties.dhProperties.samplerDescriptorAlignment);
-        newScene.samplerHeap = allocator.createBuffer((model.samplers.size() + 1) * stride + properties.dhProperties.minSamplerHeapReservedRange,
-            VK_BUFFER_USAGE_DESCRIPTOR_HEAP_BIT_EXT, VMA_MEMORY_USAGE_CPU_TO_GPU, true, properties.dhProperties.samplerHeapAlignment);
-
         //TODO: Support more sampler types
-        //Default sampler
-        {
-            VkSamplerCreateInfo samplerInfo{ .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
-            samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-            samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
-            samplerInfo.minLod = 0;
-            samplerInfo.minFilter = VK_FILTER_LINEAR;
-            samplerInfo.magFilter = VK_FILTER_LINEAR;
-            newScene.samplerCreateInfos.push_back(samplerInfo);
-
-            VkHostAddressRangeEXT hostAddressRange{};
-            hostAddressRange.address = reinterpret_cast<char *>(newScene.samplerHeap.info.pMappedData);
-            hostAddressRange.size = properties.dhProperties.samplerDescriptorSize;
-            hostAddressRanges.push_back(hostAddressRange);
-        }
 
         for (int i = 0; i < model.samplers.size(); ++i) {
             const auto &sampler = model.samplers[i];
@@ -306,26 +357,13 @@ Scene loader::loadScene(VkDevice &device, Allocator &allocator, const std::strin
             samplerInfo.minFilter = VK_FILTER_LINEAR;
             samplerInfo.magFilter = VK_FILTER_LINEAR;
             newScene.samplerCreateInfos.push_back(samplerInfo);
-            
-            VkHostAddressRangeEXT hostAddressRange{};
-            hostAddressRange.address = reinterpret_cast<char*>(newScene.samplerHeap.allocation->GetMappedData()) + (i + 1) * stride;
-            hostAddressRange.size = properties.dhProperties.samplerDescriptorSize;
-            hostAddressRanges.push_back(hostAddressRange);
         }
-
-        dispatchTable.writeSamplerDescriptorsEXT(model.samplers.size() + 1, newScene.samplerCreateInfos.data(), hostAddressRanges.data());
     }
-
-    std::vector<VkImageDescriptorInfoEXT> imageDescriptorInfos;
-    std::vector<VkResourceDescriptorInfoEXT> resourceDescriptorInfos;
 
     //Load the images
     newScene.images.reserve(model.images.size());
     newScene.imageViewCreateInfos.reserve(model.images.size() + ENGINE_IMAGES);
     {
-        size_t stride = util::alignUp(properties.dhProperties.imageDescriptorSize, properties.dhProperties.imageDescriptorAlignment);
-        std::vector<VkHostAddressRangeEXT> hostAddressRanges;
-        hostAddressRanges.reserve(model.images.size() + ENGINE_IMAGES);
         for (int i = 0; i < model.images.size(); ++i) {
             const auto &image = model.images[i];
 
@@ -350,19 +388,6 @@ Scene loader::loadScene(VkDevice &device, Allocator &allocator, const std::strin
             }
 
             newScene.imageViewCreateInfos.push_back(info);
-            VkImageDescriptorInfoEXT imageDescriptorInfo{ .sType = VK_STRUCTURE_TYPE_IMAGE_DESCRIPTOR_INFO_EXT };
-            imageDescriptorInfo.pView = &newScene.imageViewCreateInfos.back();
-            imageDescriptorInfo.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            imageDescriptorInfos.push_back(imageDescriptorInfo);
-
-            VkResourceDescriptorInfoEXT resourceDescriptorInfo{ .sType = VK_STRUCTURE_TYPE_RESOURCE_DESCRIPTOR_INFO_EXT };
-            resourceDescriptorInfo.type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-            resourceDescriptorInfo.data.pImage = &imageDescriptorInfos.back();
-            resourceDescriptorInfos.push_back(resourceDescriptorInfo);
-
-            VkHostAddressRangeEXT hostAddressRange{};
-            hostAddressRange.address = reinterpret_cast<char *>(newScene.samplerHeap.allocation->GetMappedData()) + i * stride;
-            hostAddressRange.size = (model.images.size() + ENGINE_IMAGES) * stride;
         }
     }
     
@@ -374,36 +399,210 @@ Scene loader::loadScene(VkDevice &device, Allocator &allocator, const std::strin
     newScene.textureBuffer = allocator.uploadBuffer(newScene.textures.data(), newScene.textures.size() * sizeof(Texture), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
         VMA_MEMORY_USAGE_GPU_ONLY);
 
-    //TODO: Load instances
+    //Build the acceleration structures
+    std::vector<std::vector<VkAccelerationStructureGeometryKHR>> blasGeometries;
+    std::vector<std::vector<VkAccelerationStructureBuildRangeInfoKHR>> blasRanges;
+    std::vector<VkAccelerationStructureBuildGeometryInfoKHR> blasBuildInfos;
+
+    std::vector<AllocatedBuffer> scratchBuffers;
+    scratchBuffers.reserve(newScene.meshes.size() + 1); //1 extra for the tlas
+
+    for (int i = 0; i < newScene.meshes.size(); ++i) {
+        Mesh &mesh = newScene.meshes[i];
+        if (mesh.subMeshes.empty()) continue; //Skip acceleration structure build for meshes with no triangles
+
+        blasGeometries.push_back({});
+        blasRanges.push_back({});
+
+        std::vector<uint32_t> triCounts;
+        triCounts.reserve(mesh.subMeshes.size());
+
+        for (const SubMesh &subMesh : mesh.subMeshes) {
+            VkAccelerationStructureGeometryKHR geometry{ .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR };
+            geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+            geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR; //TODO: Modify for transmissive materials
+            geometry.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+            geometry.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+            geometry.geometry.triangles.vertexData.deviceAddress = subMesh.posBuffer.address;
+            geometry.geometry.triangles.vertexStride = sizeof(glm::vec3);
+            geometry.geometry.triangles.maxVertex = subMesh.vertexCount - 1;
+            geometry.geometry.triangles.indexType = VK_INDEX_TYPE_UINT32;
+            geometry.geometry.triangles.indexData.deviceAddress = subMesh.indexBuffer.address;
+
+            blasGeometries.back().push_back(geometry);
+            blasRanges.back().push_back({.primitiveCount = subMesh.indexCount / 3});
+            triCounts.push_back(subMesh.indexCount / 3);
+        }
+
+        //The submeshes are geometries used to build the blas for the mesh which contains them
+        VkAccelerationStructureBuildGeometryInfoKHR buildInfo{ .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR };
+        buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+        buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+        buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+        buildInfo.geometryCount = static_cast<uint32_t>(blasGeometries.back().size());
+        buildInfo.pGeometries = blasGeometries.back().data();
+
+        scratchBuffers.push_back({});
+
+        //Create the logical structure for the acceleration structure
+        mesh.blas = createAccelerationStructure(dispatchTable, allocator, deviceProperties, buildInfo, triCounts.data(), scratchBuffers.back());
+
+        blasBuildInfos.push_back(buildInfo);
+    }
+
+    std::vector<uint32_t> firstSubMesh(newScene.meshes.size());
+    std::vector<DeviceSubMesh> subMeshTable; //Flat array of DeviceSubMeshes
+    for (size_t i = 0; i < newScene.meshes.size(); ++i) {
+        firstSubMesh[i] = subMeshTable.size(); //Get the next free index
+
+        for (const auto &subMesh : newScene.meshes[i].subMeshes) {
+            DeviceSubMesh deviceSubMesh{};
+            deviceSubMesh.indexBuffer = subMesh.indexBuffer.address;
+            deviceSubMesh.posBuffer = subMesh.posBuffer.address;
+            deviceSubMesh.vertexBuffer = subMesh.vertexBuffer.address;
+            deviceSubMesh.materialIdx = subMesh.materialIdx;
+            
+            subMeshTable.push_back(deviceSubMesh);
+        }
+    }
+    newScene.subMeshBuffer = allocator.uploadBuffer(subMeshTable.data(), subMeshTable.size() * sizeof(DeviceSubMesh), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        VMA_MEMORY_USAGE_GPU_ONLY, false);
+
+    //Traverse the scene graph to load instances
+    std::vector<Instance> instances;
+    if (!model.scenes.empty()) {
+        const tinygltf::Scene &modelScene = model.scenes[model.defaultScene >= 0 ? model.defaultScene : 0];
+
+        for (int root : modelScene.nodes) traverseSceneGraph(model, root, glm::mat4(1.f), instances);
+    }
+    else {
+        //Push the meshes with default transforms
+        for (int i = 0; i < newScene.meshes.size(); ++i) {
+            Instance instance{};
+            instance.mesh = i;
+            instance.transform = glm::mat4{ 1.f };
+
+            instances.push_back(instance);
+        }
+    }
+
+    std::vector<VkAccelerationStructureInstanceKHR> vkInstances;
+    vkInstances.reserve(instances.size());
+
+    //Convert our instances into instances for Vulkan to use
+    for (auto &instance : instances) {
+        if (newScene.meshes[instance.mesh].subMeshes.empty()) continue; //Don't create an instance of a mesh that doesn't have triangles
+
+        VkAccelerationStructureInstanceKHR vkInstance{};
+
+        //Vulkan instances have a row-major transform matrix that is 3 by 4
+        glm::mat4 transformRowMajor = glm::transpose(instance.transform);
+        memcpy(&vkInstance.transform, glm::value_ptr(transformRowMajor), sizeof(VkTransformMatrixKHR));
+        vkInstance.instanceCustomIndex = firstSubMesh[instance.mesh]; //Sets the builtin index of our instance to our custom value
+
+        vkInstance.mask = 0xFF; //TODO: Look more into this. Apparently this combined with a ray's cull mask allows you to have certain rays interact only with certain instances
+        vkInstance.instanceShaderBindingTableRecordOffset = 0;
+        vkInstance.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+        vkInstance.accelerationStructureReference = newScene.meshes[instance.mesh].blas.address;
+
+        vkInstances.push_back(vkInstance);
+    }
+
+    newScene.instanceBuffer = allocator.uploadBuffer(vkInstances.data(), vkInstances.size() * sizeof(VkAccelerationStructureInstanceKHR), 
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, VMA_MEMORY_USAGE_GPU_ONLY, false);
 
     //TODO: Build the tlas for the scene
+    VkAccelerationStructureGeometryKHR tlasGeometry{};
+    tlasGeometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    tlasGeometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    tlasGeometry.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    tlasGeometry.geometry.instances.arrayOfPointers = VK_FALSE;
+    tlasGeometry.geometry.instances.data.deviceAddress = newScene.instanceBuffer.address;
+
+    VkAccelerationStructureBuildGeometryInfoKHR tlasBuildInfo{};
+    tlasBuildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    tlasBuildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    tlasBuildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    tlasBuildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    tlasBuildInfo.geometryCount = 1;
+    tlasBuildInfo.pGeometries = &tlasGeometry;
+
+    uint32_t instanceCount = vkInstances.size();
+    scratchBuffers.push_back({});
+    newScene.tlas = createAccelerationStructure(dispatchTable, allocator, deviceProperties, tlasBuildInfo, &instanceCount, scratchBuffers.back());
+    
+    VkAccelerationStructureBuildRangeInfoKHR tlasRange{};
+    tlasRange.primitiveCount = instanceCount;
+
+    //Build the blases
+    allocator.immediateSubmit([&](VkCommandBuffer commandBuffer) {
+        std::vector<const VkAccelerationStructureBuildRangeInfoKHR *> pRanges;
+
+        pRanges.reserve(blasRanges.size());
+        for (auto &ranges : blasRanges) pRanges.push_back(ranges.data());
+
+        //Batch build the blases
+        dispatchTable.cmdBuildAccelerationStructuresKHR(commandBuffer, blasBuildInfos.size(), 
+            blasBuildInfos.data(), pRanges.data());
+
+        //Force the tlas build reads to wait for the blas build writes
+        //Side note, I think I finally (kind of) understand what this pipeline business is all about.
+        //Each command goes through a hardware pipeline. The barrier enforces synchronization between command A's src stage mask and src access mask
+        //and command B's dst stage mask and dst access mask, where A and B are determined by their positioning in the command buffer's recording
+        VkMemoryBarrier2 barrier{ .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+        barrier.srcStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
+        barrier.srcAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+        barrier.dstStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
+        barrier.dstAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+        VkDependencyInfo dependency{ .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+        dependency.memoryBarrierCount = 1;
+        dependency.pMemoryBarriers = &barrier;
+
+        vkCmdPipelineBarrier2(commandBuffer, &dependency);
+
+        //Build the tlas
+        const VkAccelerationStructureBuildRangeInfoKHR *pTlasRange = &tlasRange;
+        dispatchTable.cmdBuildAccelerationStructuresKHR(commandBuffer, 1, &tlasBuildInfo, &pTlasRange);
+        });
+
+    //Destroy the scratch buffers
+    for (auto &scratchBuffer : scratchBuffers) allocator.destroyBuffer(scratchBuffer);
 
     newScene.loaded = true;
     return newScene;
 }
 
-void loader::destroyScene(VkDevice &device, Allocator &allocator, Scene &scene) {
+void loader::destroyScene(VkDevice &device, Allocator &allocator, Scene &scene, vkb::DispatchTable &dispatchTable) {
     for (auto &mesh : scene.meshes) {
         for (auto &subMesh : mesh.subMeshes) {
             allocator.destroyBuffer(subMesh.indexBuffer);
             allocator.destroyBuffer(subMesh.posBuffer);
             allocator.destroyBuffer(subMesh.vertexBuffer);
+        }
 
-            //TODO: Destroy blas for the submesh
+        //TODO: Destroy blas for mesh
+        if (mesh.blas.as != VK_NULL_HANDLE) {
+            dispatchTable.destroyAccelerationStructureKHR(mesh.blas.as, nullptr);
+            allocator.destroyBuffer(mesh.blas.buffer);
         }
 
         mesh.subMeshes.clear();
     }
     scene.meshes.clear();
 
-    allocator.destroyBuffer(scene.materials);
+    allocator.destroyBuffer(scene.materialBuffer);
     allocator.destroyBuffer(scene.textureBuffer);
 
     //Destroy images
     for (auto &image : scene.images) allocator.destroyImage(image);
     scene.images.clear();
 
-    //TODO: Destroy tlas for the scene
+    allocator.destroyBuffer(scene.instanceBuffer);
+    allocator.destroyBuffer(scene.subMeshBuffer);
 
+    //TODO: Destroy tlas for the scene
+    dispatchTable.destroyAccelerationStructureKHR(scene.tlas.as, nullptr);
+    allocator.destroyBuffer(scene.tlas.buffer);
+    scene.loaded = false;
 
 }
