@@ -37,7 +37,7 @@ public:
 
 	//Images
 	AllocatedImage createImage(VkExtent3D extent, VkFormat format, VkImageUsageFlags usage, bool mipmaps = false, VkImageViewCreateInfo *imageViewInfoSave = nullptr);
-	AllocatedImage createImage(const void *data, VkExtent3D extent, VkFormat format, VkImageUsageFlags usage, bool mipmaps = false, VkImageViewCreateInfo *imageViewInfoSave = nullptr);
+	AllocatedImage createImage(const void *data, VkExtent3D extent, VkFormat format, VkImageUsageFlags usage, bool mipmaps = false, VkImageViewCreateInfo *imageViewInfoSave = nullptr, size_t bytesPerPixel = 4);
 	void destroyImage(const AllocatedImage &image);
 
 private:

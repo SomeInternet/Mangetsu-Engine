@@ -255,10 +255,6 @@ void Engine::createRadianceImage() {
 		});
 }
 
-void Engine::destroyRadianceImage() {
-	_allocator.destroyImage(_radianceImage);
-}
-
 void Engine::initRadianceImageDescriptors() {
 	writeImageDescriptor(0, _radianceImageViewCreateInfo, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_IMAGE_LAYOUT_GENERAL);
 	_allocator.flush(_imageHeap);
@@ -375,14 +371,40 @@ void Engine::initDescriptorHeaps() {
 		});
 }
 
+void Engine::loadHdrImage(const std::string &path) {
+
+	//Load the hdr using stb
+	int width, height, numChannels;
+	float *data = stbi_loadf(path.c_str(), &width, &height, &numChannels, 4);
+
+	if (!data) {
+		std::cout << "Failed to load hdr: " << path << std::endl;
+		return;
+	}
+	if (_hdrLoaded) {
+		vkDeviceWaitIdle(_device);
+		_allocator.destroyImage(_hdrImage);
+	} 
+
+	VkExtent3D extent;
+	extent.width = width;
+	extent.height = height;
+	extent.depth = 1;
+	_hdrImage = _allocator.createImage(data, extent, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_USAGE_SAMPLED_BIT, false, &_hdrImageViewCreateInfo, 4 * sizeof(float));
+	_hdrLoaded = true;
+	stbi_image_free(data);
+	writeImageDescriptor(ENGINE_IMAGES + MAX_SWAPCHAIN_SIZE, _hdrImageViewCreateInfo, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	_allocator.flush(_imageHeap);
+}
+
 void Engine::writeSceneDescriptors() {
 	const auto &dh = _deviceProperties.dhProperties;
 
-	if (_scene.images.size() > N_IMAGE_DESCRIPTORS - ENGINE_IMAGES - MAX_SWAPCHAIN_SIZE) throw std::runtime_error("Number of images in scene exceeds maximum!");
+	if (_scene.images.size() > N_IMAGE_DESCRIPTORS - ENGINE_IMAGES - MAX_SWAPCHAIN_SIZE - HDR_IMAGES) throw std::runtime_error("Number of images in scene exceeds maximum!");
 	if (_scene.samplerCreateInfos.size() > N_SAMPLER_DESCRIPTORS - 1) throw std::runtime_error("Number of samplers in scene exceeds maximum!");
 
 	for (size_t i = 0; i < _scene.images.size(); ++i) {
-		writeImageDescriptor(ENGINE_IMAGES + MAX_SWAPCHAIN_SIZE + i, _scene.imageViewCreateInfos[i], VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		writeImageDescriptor(ENGINE_IMAGES + HDR_IMAGES + MAX_SWAPCHAIN_SIZE + i, _scene.imageViewCreateInfos[i], VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 	}
 	_allocator.flush(_imageHeap);
 
@@ -438,9 +460,10 @@ void Engine::initPipelinePathtracer() {
 	//Create the bindings for the resources
 	std::array mappings = {
 		heapMapping(0, VK_SPIRV_RESOURCE_TYPE_READ_WRITE_IMAGE_BIT_EXT, 0 * imageStride, 0), //Radiance Image
-		heapMapping(1, VK_SPIRV_RESOURCE_TYPE_SAMPLED_IMAGE_BIT_EXT, (ENGINE_IMAGES + MAX_SWAPCHAIN_SIZE) * imageStride, imageStride), //Scene images
+		heapMapping(1, VK_SPIRV_RESOURCE_TYPE_SAMPLED_IMAGE_BIT_EXT, (ENGINE_IMAGES + MAX_SWAPCHAIN_SIZE + HDR_IMAGES) * imageStride, imageStride), //Scene images
 		heapMapping(2, VK_SPIRV_RESOURCE_TYPE_SAMPLER_BIT_EXT, 0, _samplerHeapLayout.stride), //Samplers
 		pushAddressMapping(3, VK_SPIRV_RESOURCE_TYPE_ACCELERATION_STRUCTURE_BIT_EXT, offsetof(PushConstantsPathtracer, tlas)), //Tlas
+		heapMapping(4, VK_SPIRV_RESOURCE_TYPE_SAMPLED_IMAGE_BIT_EXT, (ENGINE_IMAGES + MAX_SWAPCHAIN_SIZE) * imageStride, imageStride), //Hdr image
 	};
 
 	VkShaderDescriptorSetAndBindingMappingInfoEXT mappingInfo{ .sType = VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT };
@@ -773,7 +796,7 @@ void Engine::resize() {
 	initSwapChainDescriptors();
 
 	//Destroy and recreate the radiance image
-	destroyRadianceImage();
+	_allocator.destroyImage(_radianceImage);
 	createRadianceImage();
 	initRadianceImageDescriptors();
 
@@ -801,9 +824,9 @@ void Engine::init() {
 	_allocator.setCommandInfo(_queue, _immCommandBuffer, _immFence);
 
 	createRadianceImage();
-
 	initDescriptorHeaps();
 
+	loadHdrImage("./hdrs/kloofendal_48d_partly_cloudy_puresky_4k.hdr");
 	initSwapChainDescriptors();
 	initRadianceImageDescriptors();
 
@@ -862,7 +885,8 @@ void Engine::cleanup() {
 		if (_scene.loaded) loader::destroyScene(_device, _allocator, _scene, _dispatchTable);
 
 		destroySwapChain();
-		destroyRadianceImage();
+		if (_hdrLoaded) _allocator.destroyImage(_hdrImage);
+		_allocator.destroyImage(_radianceImage);
 
 		_deletionQueue.flush();
 

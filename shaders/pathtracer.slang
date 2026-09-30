@@ -14,6 +14,9 @@ SamplerState samplers[];
 [vk::binding(3, 0)]
 RaytracingAccelerationStructure tlas;
 
+[vk::binding(4, 0)]
+Texture2D<float4> hdrImage;
+
 [[vk::push_constant]]
 PushConstantsPathtracer pc;
 
@@ -142,7 +145,10 @@ void closestHit(inout HitPayload payload, in BuiltInTriangleIntersectionAttribut
 
 [shader("miss")]
 void miss(inout HitPayload payload) {
-    payload.emissiveness = float3(.25f);
+    float2 uv = float2(atan2(WorldRayDirection().z, WorldRayDirection().x), asin(WorldRayDirection().y));
+    uv *= float2(1.f / (2.f * PI), -1.f / PI); //v is flipped
+    uv += float2(.5f);
+    payload.emissiveness = hdrImage.SampleLevel(samplers[0], uv, 0.f).rgb;
     payload.depth = MAX_BOUNCES;
 }
 

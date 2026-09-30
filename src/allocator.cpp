@@ -132,8 +132,9 @@ AllocatedImage Allocator::createImage(VkExtent3D extent, VkFormat format, VkImag
 	return newImage;
 }
 
-AllocatedImage Allocator::createImage(const void *data, VkExtent3D extent, VkFormat format, VkImageUsageFlags usage, bool mipmaps /*= false*/, VkImageViewCreateInfo *imageViewInfoSave /*= nullptr*/ ) {
-	size_t dataSize = extent.width * extent.height * extent.depth * 4; //We're assuming 8-bit RGBA channels
+AllocatedImage Allocator::createImage(const void *data, VkExtent3D extent, VkFormat format, VkImageUsageFlags usage, 
+	bool mipmaps /*= false*/, VkImageViewCreateInfo *imageViewInfoSave /*= nullptr*/, size_t bytesPerPixel /*= 4*/ ) {
+	size_t dataSize = extent.width * extent.height * extent.depth * bytesPerPixel; //We're assuming 8-bit RGBA channels
 
 	AllocatedBuffer stagingBuffer = createBuffer(dataSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 	memcpy(stagingBuffer.info.pMappedData, data, dataSize);

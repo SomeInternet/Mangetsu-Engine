@@ -5,7 +5,8 @@
 #define INFINITY 0x1.fffffep+127f
 
 #define ENGINE_IMAGES 1
-#define MAX_SWAPCHAIN_SIZE 8
+#define MAX_SWAPCHAIN_SIZE 4
+#define HDR_IMAGES 1
 
 //Struct definitions
 struct Vertex {

@@ -44,6 +44,7 @@ constexpr int MAX_SWAPCHAIN_SIZE = 4;
 constexpr int FRAMES_IN_FLIGHT = 3;
 
 constexpr int ENGINE_IMAGES = 1;
+constexpr int HDR_IMAGES = 1;
 constexpr int N_IMAGE_DESCRIPTORS = 4096;
 constexpr int N_SAMPLER_DESCRIPTORS = 256;
 
@@ -113,6 +114,11 @@ private:
 	//Vulkan raytracing objects
 	Scene _scene{};
 
+	//IBL
+	bool _hdrLoaded{ false };
+	AllocatedImage _hdrImage{};
+	VkImageViewCreateInfo _hdrImageViewCreateInfo;
+
 	//For the shader binding table
 	VkStridedDeviceAddressRegionKHR _rayGenerationRegion{};
 	VkStridedDeviceAddressRegionKHR _missRegion{};
@@ -137,12 +143,14 @@ private:
 
 	void createRadianceImage();
 	void initRadianceImageDescriptors();
-	void destroyRadianceImage();
 
 	void initCommandResources();
 	void initSyncStructures();
 
 	void initDescriptorHeaps();
+
+	void loadHdrImage(const std::string &path);
+
 	void writeSceneDescriptors();
 	void writeImageDescriptor(uint32_t slot, const VkImageViewCreateInfo &viewInfo, VkDescriptorType type, VkImageLayout layout);
 
