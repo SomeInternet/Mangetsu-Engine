@@ -15,6 +15,10 @@ struct PushConstantsPathtracer {
 
 	float fov;
 	uint32_t frameNum;
+	uint32_t maxBounces{ 10 };
+
+	float lensRadius{ 0.f };
+	float focusDist{ 1.f };
 
 	//TODO: Add things like depth of field, or environment color?
 };

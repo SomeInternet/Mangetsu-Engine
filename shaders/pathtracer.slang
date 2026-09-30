@@ -26,22 +26,27 @@ void rayGeneration() {
 
     samplePos += float2(rand(), rand()); //Add jitter for anti-aliasing
 
-    float2 screen = float2((samplePos.x - imageSize.x / 2.f) / (imageSize.x / 2.f), (imageSize.y / 2.f - samplePos.y) / (imageSize.y / 2.f));
-
     RayDesc ray;
-    ray.Origin = pc.camPos;
-    ray.Direction = normalize(pc.camForward * 1.f / tan(pc.fov / 2.f) + screen.x * (imageSize.x / imageSize.y) * pc.camRight + screen.y * pc.camUp);
+    {
+        float aspect = imageSize.x / imageSize.y;
+        float2 ndc = float2((samplePos.x - imageSize.x / 2.f) / (imageSize.x / 2.f), (imageSize.y / 2.f - samplePos.y) / (imageSize.y / 2.f));
+        float3 dir = normalize(pc.camForward + pc.camRight * tan(pc.fov / 2.f) * ndc.x * aspect + pc.camUp * tan(pc.fov / 2.f) * ndc.y);
+
+        float2 lensSample = toDiskConcentric(float2(rand(), rand()));
+        //Get the direction of the ray by finding the point on the focus plane, subtracting the point on the lens we're sampling from, and normalizing
+        ray.Origin = pc.camPos + pc.camUp * lensSample.x * pc.lensRadius + pc.camRight * lensSample.y * pc.lensRadius;
+        ray.Direction = normalize(pc.camPos + dir * pc.focusDist / dot(dir, pc.camForward) - ray.Origin);
+    }
     ray.TMin = EPSILON; // Avoid self-intersection
     ray.TMax = INFINITY;
 
     float3 throughput = float3(1.f);
     float3 finalColor = float3(0.f);
     HitPayload payload = {};
-    while (payload.depth < MAX_BOUNCES) {
-        // For shader execution reordering
-        
+    while (payload.depth < pc.maxBounces) {
         payload.seed = seed;
 
+        //For SER
         HitObject hitObject = HitObject::TraceRay(tlas, 0, 0xFF, 0, 0, 0, ray, payload);
         ReorderThread(hitObject);
         HitObject::Invoke<HitPayload>(tlas, hitObject, payload);       
@@ -60,6 +65,8 @@ void rayGeneration() {
             finalColor += throughput * payload.emissiveness;
             break;
         }
+
+        seed = payload.seed;
     }
 
     radianceImage[DispatchRaysIndex().xy] = radianceImage[DispatchRaysIndex().xy] * float(pc.frameNum) / float(pc.frameNum + 1) + 
@@ -79,13 +86,18 @@ void closestHit(inout HitPayload payload, in BuiltInTriangleIntersectionAttribut
 
     PointInfo pointInfo = getPointInfo(subMeshIdx, triIdx, barycentrics, pc);
 
+    if (dot(ObjectRayDirection(), pointInfo.nor) > 0.f) pointInfo.nor *= -1.f;
+    if (dot(pointInfo.nor, pointInfo.orientation[2]) < 0.f) pointInfo.orientation *= -1.f;
+
+    //if (HitKind() == HIT_KIND_TRIANGLE_BACK_FACE) pointInfo.orientation *= -1;// On a back face hit, flip the orientation
+
     //TODO: Consider an alternative to my current solution to a material index being 0
     Material material = pc.materials[max(pc.deviceSubMeshes[subMeshIdx].materialIdx, 0)];
 
     if (length(material.emission.rgb) > 0) {
-        float3 emissionColor = material.emission.xyz * (material.emissionTexIdx != -1 ? 
+        float3 emissionColor = material.emission.rgb * (material.emissionTexIdx != -1 ? 
         sceneImages[NonUniformResourceIndex(pc.textures[material.emissionTexIdx].imageIdx)]
-                       .SampleLevel(samplers[NonUniformResourceIndex( pc.textures[material.emissionTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f)[1] : 
+                       .SampleLevel(samplers[NonUniformResourceIndex( pc.textures[material.emissionTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f).rgb : 
         float3(1.f));
 
         payload.emissiveness = emissionColor * material.emission[3];
@@ -100,8 +112,17 @@ void closestHit(inout HitPayload payload, in BuiltInTriangleIntersectionAttribut
                                .SampleLevel(samplers[NonUniformResourceIndex( pc.textures[material.metallicRoughnessTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f)[1] : 
         1.f);
     }
-    float3 wh = sampleWh(roughness, wo, float2(rand(), rand()));
-    float3 wi = reflect(-wo, wh);
+    roughness = max(roughness, .00001f);
+
+    float metallic;
+    {
+        metallic = material.metallic * (material.metallicRoughnessTexIdx != -1 ? 
+        sceneImages[NonUniformResourceIndex(pc.textures[material.metallicRoughnessTexIdx].imageIdx)]
+                               .SampleLevel(samplers[NonUniformResourceIndex( pc.textures[material.metallicRoughnessTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f)[2] : 
+        1.f);
+    }
+
+    float3 wi = (rand() <= .4f + .6f * metallic) ? reflect(-wo, sampleWh(roughness, wo, float2(rand(), rand()))) : toHemisphereCosineWeighted(float2(rand(), rand()));
 
     //TODO: Implement the BSDF for transmissive materials, and Cook-Torrance rather than just Torrance-Sparrow
     {
@@ -110,16 +131,18 @@ void closestHit(inout HitPayload payload, in BuiltInTriangleIntersectionAttribut
         .SampleLevel( samplers[NonUniformResourceIndex(pc.textures[material.colorTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f) : 
         float4(1.f));
 
-        payload.throughput = float4(brdfTorranceSparrow(wo, wi, albedo.xyz, roughness)/ pdfTorranceSparrow(wo, wh, roughness), 1.f) * max(0.f, wi.z);
+        float rand = rand();
+        payload.throughput = float4(brdfCookTorrance(wo, wi, albedo.xyz, metallic, roughness, rand)/ pdfCookTorrance(wo, wi, metallic, roughness, rand), 1.f);
     }
 
     payload.rayDir = normalize(mul(ObjectToWorld3x4(), float4(mul(transpose(pointInfo.orientation), wi), 0.f)).xyz);
     payload.rayOrigin = WorldRayOrigin() + WorldRayDirection() * RayTCurrent() + normalize(mul(ObjectToWorld3x4(), float4(mul(transpose(pointInfo.orientation), float3(0.f, 0.f, 1.f)), 0.f))) * EPSILON;
+    payload.seed = seed;
 }
 
 [shader("miss")]
 void miss(inout HitPayload payload) {
-    payload.emissiveness = float3(0.f);
+    payload.emissiveness = float3(.25f);
     payload.depth = MAX_BOUNCES;
 }
 

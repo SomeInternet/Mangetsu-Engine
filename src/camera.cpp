@@ -56,7 +56,7 @@ void Camera::toPushConstantsPathtracer(PushConstantsPathtracer &pc) {
 void Camera::processEvent(SDL_Event e) {
 	if (e.type == SDL_EVENT_MOUSE_MOTION) {
 		if (leftDown) orbit(-e.motion.xrel, -e.motion.yrel);
-		else if (rightDown) pan(e.motion.xrel, e.motion.yrel);
+		else if (rightDown) pan(-e.motion.xrel, -e.motion.yrel);
 	}
 	else if (e.type == SDL_EVENT_MOUSE_WHEEL) zoom(e.wheel.y);
 	else if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT) leftDown = true;

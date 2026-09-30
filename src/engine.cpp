@@ -616,9 +616,25 @@ void Engine::drawImgui(VkCommandBuffer commandBuffer, VkImageView targetImageVie
 	static float f = 0.0f;
 	static int counter = 0;
 
-	ImGui::Begin("Mangetsu Engine Analytics");
+	ImGui::Begin("Mangetsu Engine Analytics", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
 
 	ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+
+	int maxBounces = _pcpt.maxBounces;
+	ImGui::SliderInt("Max bounces", &maxBounces, 1, 20);
+	if (maxBounces != _pcpt.maxBounces) _frameNum = 0;
+	_pcpt.maxBounces = maxBounces;
+
+	float focusDist = _pcpt.focusDist;
+	ImGui::SliderFloat("Focus distance", &focusDist, 1.f, 20.f);
+	if (focusDist != _pcpt.focusDist) _frameNum = 0;
+	_pcpt.focusDist = focusDist;
+
+	float lensRadius = _pcpt.lensRadius;
+	ImGui::SliderFloat("Lens radius", &lensRadius, 0.f, 1.f);
+	if (lensRadius != _pcpt.lensRadius) _frameNum = 0;
+	_pcpt.lensRadius = lensRadius;
+
 	ImGui::End();
 	ImGui::Render();
 
@@ -672,21 +688,20 @@ void Engine::draw() {
 	_dispatchTable.cmdBindSamplerHeapEXT(commandBuffer, &samplerHeapBind);
 
 	//Call the pathtracer
-	PushConstantsPathtracer pcpt{};
 	if (_camera.wasDirty()) _frameNum = 0; //Reset the frame if the camera's view or rotation changed
 		
-	_camera.toPushConstantsPathtracer(pcpt);
-	pcpt.frameNum = _frameNum;
-	pcpt.deviceSubMeshes = _scene.subMeshBuffer.address;
-	pcpt.materials = _scene.materialBuffer.address;
-	pcpt.textures = _scene.textureBuffer.address;
-	pcpt.tlas = _scene.tlas.address;
+	_camera.toPushConstantsPathtracer(_pcpt);
+	_pcpt.frameNum = _frameNum;
+	_pcpt.deviceSubMeshes = _scene.subMeshBuffer.address;
+	_pcpt.materials = _scene.materialBuffer.address;
+	_pcpt.textures = _scene.textureBuffer.address;
+	_pcpt.tlas = _scene.tlas.address;
 
 	vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _pipelinePathtracer);
 
 	VkPushDataInfoEXT pushDataPt{ .sType = VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT };
 	pushDataPt.offset = 0;
-	pushDataPt.data = { &pcpt, sizeof(PushConstantsPathtracer) };
+	pushDataPt.data = { &_pcpt, sizeof(PushConstantsPathtracer) };
 	
 	_dispatchTable.cmdPushDataEXT(commandBuffer, &pushDataPt);
 	_dispatchTable.cmdTraceRaysKHR(commandBuffer, &_rayGenerationRegion, &_missRegion, &_hitRegion, &_callRegion, _swapChainExtent.width, _swapChainExtent.height, 1);
@@ -762,6 +777,7 @@ void Engine::resize() {
 	createRadianceImage();
 	initRadianceImageDescriptors();
 
+	_frameNum = 0;
 	_resize = false;
 }
 
@@ -794,7 +810,7 @@ void Engine::init() {
 	_loaded = true;
 
 	//Load default scene
-	std::string path = "./models/cornellbox_texture.glb";
+	std::string path = "./models/living_room.glb";
 	loadScene(path);
 
 	initPipelinePathtracer();
@@ -812,6 +828,8 @@ void Engine::run() {
 
 		//Handle events
 		while (SDL_PollEvent(&e) != 0) {
+			ImGui_ImplSDL3_ProcessEvent(&e);
+
 			if (e.type == SDL_EVENT_QUIT) quit = true;
 
 			if (e.type == SDL_EVENT_WINDOW_MINIMIZED) _minimized = true;

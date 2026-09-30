@@ -108,6 +108,8 @@ private:
 	ImGuiIO *_io{ nullptr };
 	Camera _camera{};
 
+	PushConstantsPathtracer _pcpt{};
+
 	//Vulkan raytracing objects
 	Scene _scene{};
 

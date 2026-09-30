@@ -36,6 +36,7 @@ inline float3 brdfTorranceSparrow(float3 wo, float3 wi, float3 f0, float roughne
     //Perfectly specular case
     if (roughness == 0.f) return f0;
 
+    if (wo.z < 0.f) return float3(0.f);
     if (wi.z < 0.f) return float3(0.f);
 
     float3 wh = normalize(wo + wi);
@@ -80,9 +81,9 @@ inline float3 brdfTorranceSparrow(float3 wo, float3 wi, float3 f0, float roughne
     float cosThetaI = wi.z;
 
     //Clamp the denominator cosines away from 0 to avoid blow out at grazing angles
-    float denom = 4.f * max(cosThetaO, 1e-4f) * max(cosThetaI, EPSILON);
+    float denom = 4.f * max(cosThetaO, EPSILON) * max(cosThetaI, EPSILON);
 
-    return d * g * f / denom;
+    return d * g * f * max(wi.z, 0.f) / denom;
 }
 
 inline float pdfTorranceSparrow(float3 wo, float3 wh, float roughness) {
@@ -114,5 +115,26 @@ inline float pdfTorranceSparrow(float3 wo, float3 wh, float roughness) {
         g1 = 1.f / (1.f + lambdaWo);
     }
 
-    return d * g1 / (4.f * max(abs(wo.z), EPSILON));
+    return max(d * g1 / (4.f * max(abs(wo.z), EPSILON)), EPSILON);
+}
+
+inline float3 brdfCookTorrance(float3 wo, float3 wi, float3 albedo, float metallic, float roughness, float rand) {
+    float3 wh = normalize(wo + wi);
+
+    float dotWoWh = dot(wo, wh);
+
+    float3 f0 = (1.f - metallic) * float3(.04f) + metallic * albedo;
+    float3 f = f0 + (float3(1) - f0) * (1.f - dotWoWh) * (1.f - dotWoWh) * (1.f - dotWoWh) * (1.f - dotWoWh) * (1.f - dotWoWh);
+
+    float3 ks = f;
+    float3 kd = (1.f - metallic) * (float3(1.f) - ks);
+    return brdfTorranceSparrow(wo, wi, f0, roughness) + kd * albedo * max(wi.z, 0.f) / PI;
+}
+
+inline float pdfCookTorrance(float3 wo, float3 wi, float metallic, float roughness, float rand) {
+    float prGlossy = .4f + .6f * metallic;
+
+    float3 wh = normalize(wo + wi);
+
+    return prGlossy * pdfTorranceSparrow(wo, wh, roughness) + (1.f - prGlossy) * (wi.z / PI);
 }

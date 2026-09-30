@@ -56,6 +56,10 @@ struct PushConstantsPathtracer {
 
     float fov;
     uint32_t frameNum;
+    uint32_t maxBounces;
+
+    float lensRadius = 0.f;
+    float focusDist = 1.f;
 };
 
 struct HitPayload {
@@ -104,6 +108,15 @@ float rand() {
 }
 
 inline PointInfo getPointInfo(uint subMeshIdx, uint primitiveIdx, float3 barycentrics, PushConstantsPathtracer pc) {
+    float3 nor;
+    {
+        float3 *posBuffer = pc.deviceSubMeshes[subMeshIdx].posBuffer;
+        float3 p0 = posBuffer[pc.deviceSubMeshes[subMeshIdx].indexBuffer[primitiveIdx * 3]];
+        float3 p1 = posBuffer[pc.deviceSubMeshes[subMeshIdx].indexBuffer[primitiveIdx * 3 + 1]];
+        float3 p2 = posBuffer[pc.deviceSubMeshes[subMeshIdx].indexBuffer[primitiveIdx * 3 + 2]];
+        nor = normalize(cross(p1 - p0, p2 - p0));
+    }
+
     Vertex *vertices = pc.deviceSubMeshes[subMeshIdx].vertexBuffer;
 
     float3 tangent = float3(0.f);
@@ -125,8 +138,8 @@ inline PointInfo getPointInfo(uint subMeshIdx, uint primitiveIdx, float3 barycen
             float3(0.f, res.nor.z, -res.nor.y) / sqrt(res.nor.y * res.nor.y + res.nor.z * res.nor.z);
     }
     tangent = normalize(tangent);
-    res.orientation = float3x3(tangent, cross(res.nor, tangent), res.nor); //TODO: might have to change this for left-handed spaces
-
+    res.orientation = float3x3(tangent, cross(res.nor, tangent), res.nor); // TODO: might have to change this for left-handed spaces
+    res.nor = nor;
     return res;
 }
 
@@ -151,7 +164,7 @@ inline float2 toDiskConcentric(float2 xi) {
 inline float3 toHemisphereCosineWeighted(float2 xi) {
     float2 diskSample = toDiskConcentric(xi);
 
-    return float3(diskSample.x, diskSample.y, sqrt(1.f - diskSample.x * diskSample.x - diskSample.y - diskSample.y));
+    return float3(diskSample.x, diskSample.y, sqrt(1.f - diskSample.x * diskSample.x - diskSample.y * diskSample.y));
 }
 
 inline float3 toHemisphereUniform(float2 xi) {
