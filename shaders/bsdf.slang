@@ -134,7 +134,7 @@ inline float3 fDielectric(float3 wo, float3 wh, float etaA, float etaB) {
                       ((etaB * cosThetaI) + (etaA * cosThetaT));
     float rPerpendicular = ((etaA * cosThetaI) - (etaB * cosThetaT)) /
                       ((etaA * cosThetaI) + (etaB * cosThetaT));
-    float fR = (rParallel * rParallel + rPerpendicular * rPerpendicular) / .5f;
+    float fR = (rParallel * rParallel + rPerpendicular * rPerpendicular) / 2.f;
 
     return float3(fR);
 }
@@ -152,7 +152,7 @@ float etaA, float etaB, inout float3 f, float2 xi) {
         if (r < f.x * pr) { // Specular reflection
             return reflect(-wo, wh);
         } else { // Transmission or albedo
-            pr -= f.x * pr;
+            r -= f.x * pr;
             pr *= (1.f - f.x);
             if (r < transmissiveness * pr) { // Specular BTDF
                 return refract(-wo, wh, etaA / etaB);
@@ -182,7 +182,7 @@ float roughness, float3 f, float transmissiveness, inout float etaA, float etaB,
             pr *= f.x;
             return d(wh, alpha2) * g(wo, wi, alpha2) / abs(4.f * wo.z);
         } else {
-            pr -= f.x * pr;
+            rand -= f.x * pr;
             pr *= (1.f - f.x);
             if (rand < transmissiveness * pr) { // Specular BTDF
                 float denom = dot(wi, wh) + dot(wo, wh) * etaA / etaB;
@@ -190,7 +190,7 @@ float roughness, float3 f, float transmissiveness, inout float etaA, float etaB,
 
                 return albedo * d(wh, alpha2) * g(wo, wi, alpha2) * abs(dot(wo, wh) * dot(wi, wh) / (denom));
             } else { // Diffuse BRDF
-                return albedo / PI;
+                return albedo * max(wi.z, 0.f) / PI;
             }
         }
     } else { // Sample the metallic lobe
@@ -201,7 +201,7 @@ float roughness, float3 f, float transmissiveness, inout float etaA, float etaB,
 }
 
 inline float pdfCookTorrance(float3 wo, float3 wh, float3 wi, float3 albedo, float metallic, 
-float roughness, float3 f, float transmissiveness, float rand) {
+float roughness, float3 f, float transmissiveness, float etaA, float etaB, float rand) {
     float pr = 1.f;
 
     if (rand < 1.f - metallic) { // Dielectric
@@ -210,10 +210,12 @@ float roughness, float3 f, float transmissiveness, float rand) {
         if (rand < f.x * pr) { // Specular reflection
             return pdfTorranceSparrow(wo, wh, roughness);
         } else {
-            pr -= f.x * pr;
+            rand -= f.x * pr;
             pr *= (1.f - f.x);
+
             if (rand < transmissiveness * pr) { // Specular BTDF
-                return pdfTorranceSparrow(wo, wh, roughness);
+                float s = dot(wi, wh) + dot(wo, wh) * etaA / etaB;
+                return pdfTorranceSparrow(wo, wh, roughness) * 4.f * abs(dot(wo, wh)) * abs(dot(wi, wh)) / (s * s);
             } else { // Diffuse BRDF
                 return wi.z / PI;
             }

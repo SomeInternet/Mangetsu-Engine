@@ -155,7 +155,7 @@ void closestHit(inout HitPayload payload, in BuiltInTriangleIntersectionAttribut
             float etaB = entering ? ior : 1.f;
             wi = sampleWiCookTorrance(metallic, roughness, transmissiveness, rand, wo, wh, etaA, etaB, f, xi);
             bsdf = bsdfCookTorrance(wo, wh, wi, albedo.rgb, metallic, roughness, f, transmissiveness, etaA, etaB, rand);
-            pdf = pdfCookTorrance(wo, wh, wi, albedo.rgb, metallic, roughness, f, transmissiveness, rand);
+            pdf = pdfCookTorrance(wo, wh, wi, albedo.rgb, metallic, roughness, f, transmissiveness, etaA, etaB, rand);
 
         }
         payload.throughput = float4(bsdf / pdf, 1.f);
