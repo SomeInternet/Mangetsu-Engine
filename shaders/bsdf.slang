@@ -30,6 +30,43 @@ inline float3 sampleWh(float roughness, float3 wo, float2 xi) {
     return normalize(float3(alpha * nh.x, alpha * nh.y, max(EPSILON, nh.z)));
 }
 
+inline float d(float3 wh, float alpha2) {
+
+    float tan2Theta = tan2Theta(wh);
+    if (tan2Theta == INFINITY) return 0.f;
+
+    float cos4Theta = cos2Theta(wh) * cos2Theta(wh);
+
+    // Isotropic right now
+    float e = (cos2Theta(wh) / alpha2 + sin2Theta(wh) / alpha2) * tan2Theta;
+
+    return 1.f / (PI * alpha2 * cos4Theta * (1 + e) * (1 + e));
+}
+
+inline float lambda(float x, float alpha2) {
+
+    return .5f * (-1.f + sqrt(1.f + alpha2 * x));
+}
+
+inline float g(float3 wo, float3 wi, float alpha2) {
+    // Clamp cosines away from 0 so it doesn't blow up at grazing angles
+    float cosWo = max(abs(wo.z), EPSILON);
+    float cosWi = max(abs(wi.z), EPSILON);
+
+    float tan2Wo = (1.f - cosWo * cosWo) / (cosWo * cosWo);
+    float lambdaWo = .5f * (-1.f + sqrt(1.f + alpha2 * tan2Wo));
+
+    float tan2Wi = (1.f - cosWi * cosWi) / (cosWi * cosWi);
+    float lambdaWi = .5f * (-1.f + sqrt(1.f + alpha2 * tan2Wi));
+
+    return 1.f / (1.f + lambdaWo + lambdaWi);
+}
+
+// Schlick approximation of Fresnel
+inline float3 f(float3 f0, float3 wo, float3 wh) {
+    float dotWoWh = max(dot(wo, wh), 0.f);
+    return f0 + (float3(1.f) - f0) * (1.f - dotWoWh) * (1.f - dotWoWh) * (1.f - dotWoWh) * (1.f - dotWoWh) * (1.f - dotWoWh);
+}
 
 //f0 is the Fresnel reflectance when viewed parallel to the normal
 inline float3 brdfTorranceSparrow(float3 wo, float3 wi, float3 f0, float roughness) {
@@ -44,38 +81,14 @@ inline float3 brdfTorranceSparrow(float3 wo, float3 wi, float3 f0, float roughne
     float alpha = roughness * roughness;
     float alpha2 = alpha * alpha;
 
-    float d;
-    {
-        float tan2Theta = tan2Theta(wh);
-        if (tan2Theta == INFINITY) return 0.f;
+    float d = d(wh, alpha2);
 
-        float cos4Theta = cos2Theta(wh) * cos2Theta(wh);
-
-        //Isotropic right now
-        float e = (cos2Theta(wh) / alpha2 + sin2Theta(wh) / alpha2) * tan2Theta;
-
-        d = 1.f / (PI * alpha2 * cos4Theta * (1 + e) * (1 + e));
-    }
-
-    float g;
-    {
-        //Clamp cosines away from 0 so it doesn't blow up at grazing angles
-        float cosWo = max(abs(wo.z), EPSILON);
-        float cosWi = max(abs(wi.z), EPSILON);
-
-        float tan2Wo = (1.f - cosWo * cosWo) / (cosWo * cosWo);
-        float lambdaWo = .5f * (-1.f + sqrt(1.f + alpha2 * tan2Wo));
-
-        float tan2Wi = (1.f - cosWi * cosWi) / (cosWi * cosWi);
-        float lambdaWi = .5f * (-1.f + sqrt(1.f + alpha2 * tan2Wi));
-
-        g = 1.f / (1.f + lambdaWo + lambdaWi);
-    }
+    float g = g(wo, wi, alpha2);
 
     float dotWoWh = dot(wo, wh);
 
-    //Shlick approximation of Fresnel
-    float3 f = f0 + (float3(1.f) - f0) * (1.f - dotWoWh) * (1.f - dotWoWh) * (1.f - dotWoWh) * (1.f - dotWoWh) * (1.f - dotWoWh);
+    // Shlick approximation of Fresnel
+    float3 f = f(f0, wo, wh);
 
     float cosThetaO = wo.z;
     float cosThetaI = wi.z;
@@ -86,55 +99,126 @@ inline float3 brdfTorranceSparrow(float3 wo, float3 wi, float3 f0, float roughne
     return d * g * f * max(wi.z, 0.f) / denom;
 }
 
-inline float pdfTorranceSparrow(float3 wo, float3 wh, float roughness) {
-    if (roughness == 0.f) return 1.f; //Dirac delta distribution
+inline float g1(float3 wo, float alpha2) {
+    float cosWo = max(abs(wo.z), EPSILON);
 
+    float tan2Wo = (1.f - cosWo * cosWo) / (cosWo * cosWo);
+    float lambdaWo = .5f * (-1.f + sqrt(1.f + alpha2 * tan2Wo));
+
+    return 1.f / (1.f + lambdaWo);
+}
+
+inline float pdfTorranceSparrow(float3 wo, float3 wh, float roughness) {
     float alpha = roughness * roughness;
     float alpha2 = alpha * alpha;
 
-    float d;
-    {
-        float tan2Theta = tan2Theta(wh);
-        if (tan2Theta == INFINITY) return 0.f;
+    float d = d(wh, alpha2);
 
-        float cos4Theta = cos2Theta(wh) * cos2Theta(wh);
-
-        //Isotropic right now
-        float e = (cos2Theta(wh) / alpha2 + sin2Theta(wh) / alpha2) * tan2Theta;
-
-        d = 1.f / (PI * alpha2 * cos4Theta * (1 + e) * (1 + e));
-    }
-
-    float g1;
-    {
-        float cosWo = max(abs(wo.z), EPSILON);
-
-        float tan2Wo = (1.f - cosWo * cosWo) / (cosWo * cosWo);
-        float lambdaWo = .5f * (-1.f + sqrt(1.f + alpha2 * tan2Wo));
-
-        g1 = 1.f / (1.f + lambdaWo);
-    }
+    float g1 = g1(wo, alpha2);
 
     return max(d * g1 / (4.f * max(abs(wo.z), EPSILON)), EPSILON);
 }
 
-inline float3 brdfCookTorrance(float3 wo, float3 wi, float3 albedo, float metallic, float roughness, float rand) {
-    float3 wh = normalize(wo + wi);
+inline float3 fDielectric(float3 wo, float3 wh, float etaA, float etaB) {
+    float cosThetaI = clamp(dot(wo, wh), -1.f, 1.f);
+    float eta = etaA / etaB;
 
-    float dotWoWh = dot(wo, wh);
+    float sin2ThetaI = max(float(0), float(1 - cosThetaI * cosThetaI));
+    float sin2ThetaT = eta * eta * sin2ThetaI;
 
-    float3 f0 = (1.f - metallic) * float3(.04f) + metallic * albedo;
-    float3 f = f0 + (float3(1) - f0) * (1.f - dotWoWh) * (1.f - dotWoWh) * (1.f - dotWoWh) * (1.f - dotWoWh) * (1.f - dotWoWh);
+    if (sin2ThetaT >= 1) return float3(1.f);
 
-    float3 ks = f;
-    float3 kd = (1.f - metallic) * (float3(1.f) - ks);
-    return brdfTorranceSparrow(wo, wi, f0, roughness) + kd * albedo * max(wi.z, 0.f) / PI;
+    float cosThetaT = sqrt(1.f - sin2ThetaT);
+
+    float rParallel = ((etaB * cosThetaI) - (etaA * cosThetaT)) /
+                      ((etaB * cosThetaI) + (etaA * cosThetaT));
+    float rPerpendicular = ((etaA * cosThetaI) - (etaB * cosThetaT)) /
+                      ((etaA * cosThetaI) + (etaB * cosThetaT));
+    float fR = (rParallel * rParallel + rPerpendicular * rPerpendicular) / .5f;
+
+    return float3(fR);
 }
 
-inline float pdfCookTorrance(float3 wo, float3 wi, float metallic, float roughness, float rand) {
-    float prGlossy = .4f + .6f * metallic;
+inline float3 sampleWiCookTorrance(float metallic, float roughness, float transmissiveness, float r, float3 wo, inout float3 wh, 
+float etaA, float etaB, inout float3 f, float2 xi) {
+    float pr = 1.f;
 
-    float3 wh = normalize(wo + wi);
+    wh = sampleWh(roughness, wo, xi);
+    f = fDielectric(wo, wh, etaA, etaB);
 
-    return prGlossy * pdfTorranceSparrow(wo, wh, roughness) + (1.f - prGlossy) * (wi.z / PI);
+    if (r < 1.f - metallic) { // Dielectric
+        pr *= 1.f - metallic;
+
+        if (r < f.x * pr) { // Specular reflection
+            return reflect(-wo, wh);
+        } else { // Transmission or albedo
+            pr -= f.x * pr;
+            pr *= (1.f - f.x);
+            if (r < transmissiveness * pr) { // Specular BTDF
+                return refract(-wo, wh, etaA / etaB);
+            } else { // Diffuse BRDF
+                return toHemisphereCosineWeighted(float2(rand(), rand()));
+            }
+        }
+    } else { // Sample the metallic lobe
+        return reflect(-wo, wh);
+    }
+}
+
+//Based on the Khronos group's glTF spec: https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_materials_transmission/README.md
+//Currently this probably would cause a good amount of thread divergence, and variance too.
+inline float3 bsdfCookTorrance(float3 wo, float3 wh, float3 wi, float3 albedo, float metallic, 
+float roughness, float3 f, float transmissiveness, inout float etaA, float etaB, float rand) {
+    float pr = 1.f;
+    float alpha = roughness * roughness;
+    float alpha2 = alpha * alpha;
+
+    float3 f = fDielectric(wo, wh, etaA, etaB);
+
+    if (rand < 1.f - metallic) { //Dielectric
+        pr *= 1.f - metallic;
+
+        if (rand < f.x * pr) { // Specular reflection
+            pr *= f.x;
+            return d(wh, alpha2) * g(wo, wi, alpha2) / abs(4.f * wo.z);
+        } else {
+            pr -= f.x * pr;
+            pr *= (1.f - f.x);
+            if (rand < transmissiveness * pr) { // Specular BTDF
+                float denom = dot(wi, wh) + dot(wo, wh) * etaA / etaB;
+                denom *= denom * max(wo.z, EPSILON) * etaB / etaA * etaB / etaA;
+
+                return albedo * d(wh, alpha2) * g(wo, wi, alpha2) * abs(dot(wo, wh) * dot(wi, wh) / (denom));
+            } else { // Diffuse BRDF
+                return albedo / PI;
+            }
+        }
+    } else { // Sample the metallic lobe
+        pr *= metallic;
+        float3 f0 = (1.f - metallic) * float3(.04f) + metallic * albedo;
+        return brdfTorranceSparrow(wo, wi, albedo, roughness);
+    }
+}
+
+inline float pdfCookTorrance(float3 wo, float3 wh, float3 wi, float3 albedo, float metallic, 
+float roughness, float3 f, float transmissiveness, float rand) {
+    float pr = 1.f;
+
+    if (rand < 1.f - metallic) { // Dielectric
+        pr *= 1.f - metallic;
+
+        if (rand < f.x * pr) { // Specular reflection
+            return pdfTorranceSparrow(wo, wh, roughness);
+        } else {
+            pr -= f.x * pr;
+            pr *= (1.f - f.x);
+            if (rand < transmissiveness * pr) { // Specular BTDF
+                return pdfTorranceSparrow(wo, wh, roughness);
+            } else { // Diffuse BRDF
+                return wi.z / PI;
+            }
+        }
+    } else { // Sample the metallic lobe
+        return pdfTorranceSparrow(wo, wh, roughness);
+    }
 }

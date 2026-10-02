@@ -72,6 +72,8 @@ struct HitPayload {
     float3 rayOrigin = {};
     float3 rayDir = {};
 
+    float ior = 1.f; //ior of the previous material
+
     float weight = 1.f;
     int depth = 0;
 

@@ -89,6 +89,7 @@ void closestHit(inout HitPayload payload, in BuiltInTriangleIntersectionAttribut
 
     PointInfo pointInfo = getPointInfo(subMeshIdx, triIdx, barycentrics, pc);
 
+    bool entering = dot(ObjectRayDirection(), pointInfo.nor) < 0.f;
     if (dot(ObjectRayDirection(), pointInfo.nor) > 0.f) pointInfo.nor *= -1.f;
     if (dot(pointInfo.nor, pointInfo.orientation[2]) < 0.f) pointInfo.orientation *= -1.f;
 
@@ -125,21 +126,43 @@ void closestHit(inout HitPayload payload, in BuiltInTriangleIntersectionAttribut
         1.f);
     }
 
-    float3 wi = (rand() <= .4f + .6f * metallic) ? reflect(-wo, sampleWh(roughness, wo, float2(rand(), rand()))) : toHemisphereCosineWeighted(float2(rand(), rand()));
+    float transmissiveness;
+    {
+        transmissiveness = material.transmissiveness;
+    }
 
-    //TODO: Implement the BSDF for transmissive materials, and Cook-Torrance rather than just Torrance-Sparrow
+    float ior;
+    {
+        ior = material.ior;
+    }
+
+    float3 wi;
     {
         float4 albedo = material.color * (material.colorTexIdx != -1 ? 
         sceneImages[NonUniformResourceIndex(pc.textures[material.colorTexIdx].imageIdx)]
         .SampleLevel( samplers[NonUniformResourceIndex(pc.textures[material.colorTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f) : 
         float4(1.f));
 
-        float rand = rand();
-        payload.throughput = float4(brdfCookTorrance(wo, wi, albedo.xyz, metallic, roughness, rand)/ pdfCookTorrance(wo, wi, metallic, roughness, rand), 1.f);
+        float3 bsdf;
+        float pdf;
+        {
+
+            float2 xi = float2(rand(), rand());
+            float rand = rand();
+            float3 wh;
+            float3 f;
+            float etaA = entering ? 1.f : ior;
+            float etaB = entering ? ior : 1.f;
+            wi = sampleWiCookTorrance(metallic, roughness, transmissiveness, rand, wo, wh, etaA, etaB, f, xi);
+            bsdf = bsdfCookTorrance(wo, wh, wi, albedo.rgb, metallic, roughness, f, transmissiveness, etaA, etaB, rand);
+            pdf = pdfCookTorrance(wo, wh, wi, albedo.rgb, metallic, roughness, f, transmissiveness, rand);
+
+        }
+        payload.throughput = float4(bsdf / pdf, 1.f);
     }
 
     payload.rayDir = normalize(mul(ObjectToWorld3x4(), float4(mul(transpose(pointInfo.orientation), wi), 0.f)).xyz);
-    payload.rayOrigin = WorldRayOrigin() + WorldRayDirection() * RayTCurrent() + normalize(mul(ObjectToWorld3x4(), float4(mul(transpose(pointInfo.orientation), float3(0.f, 0.f, 1.f)), 0.f))) * EPSILON;
+    payload.rayOrigin = WorldRayOrigin() + WorldRayDirection() * RayTCurrent() + normalize(mul(ObjectToWorld3x4(), float4(mul(transpose(pointInfo.orientation), float3(0.f, 0.f, 1.f)), 0.f))) * sign(wi.z) * EPSILON;
     payload.seed = seed;
 }
 
