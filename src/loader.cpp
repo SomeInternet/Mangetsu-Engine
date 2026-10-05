@@ -5,6 +5,7 @@
 
 #include <tiny_gltf.h>
 #include <unordered_set>
+#include <unordered_map>
 #include <glm/gtc/type_ptr.hpp>
 
 #include "stb_image.h"
@@ -13,6 +14,7 @@
 #include "loader.h"
 #include "util.h"
 #include "init.h"
+#include "aliastable.h"
 
 //Helper for octahedral projection
 static glm::uint32 octahedral(glm::vec3 v) {
@@ -78,7 +80,8 @@ static glm::mat4 parseLocalTransform(const tinygltf::Node &node) {
     return transform;
 }
 
-static void traverseSceneGraph(const tinygltf::Model &model, int nodeIdx, const glm::mat4 &parentMatrix, std::vector<Instance> &instances) {
+static void traverseSceneGraph(const tinygltf::Model &model, int nodeIdx, const glm::mat4 &parentMatrix, 
+    std::vector<Instance> &instances, std::unordered_map<int, LightMesh> &emissiveMeshes, std::vector<Instance> &emissiveInstances) {
     const tinygltf::Node &node = model.nodes[nodeIdx];
     glm::mat4 worldMatrix = parentMatrix * parseLocalTransform(node);
 
@@ -87,6 +90,10 @@ static void traverseSceneGraph(const tinygltf::Model &model, int nodeIdx, const 
         instance.transform = worldMatrix;
         instance.mesh = node.mesh;
         instances.push_back(instance);
+
+        if (emissiveMeshes.contains(node.mesh)) {
+            emissiveInstances.push_back(instance);
+        }
     }
 
     //Recurse on children
@@ -110,7 +117,76 @@ Scene loader::loadScene(VkDevice &device, Allocator &allocator, const std::strin
 
 	Scene newScene{};
 
+    std::unordered_set<int> srgbTextures;
+    std::unordered_map<int, float> emissiveMaterials;
+    //Load materials
+    std::vector<Material> materials;
+    materials.reserve(model.materials.size());
+    for (const auto &material : model.materials) {
+        Material newMaterial{};
+
+        auto pbr = material.pbrMetallicRoughness;
+
+        newMaterial.color = glm::vec4(pbr.baseColorFactor[0],
+            pbr.baseColorFactor[1],
+            pbr.baseColorFactor[2],
+            pbr.baseColorFactor[3]);
+
+        newMaterial.metallic = pbr.metallicFactor;
+        newMaterial.roughness = pbr.roughnessFactor;
+
+        //Extract emission data
+        {
+            //Check if it supports emissive strength
+            auto ext = material.extensions.find("KHR_materials_emissive_strength");
+            bool hasEmissiveStrength = ext != material.extensions.end();
+
+            newMaterial.emission = glm::vec4(material.emissiveFactor[0],
+                material.emissiveFactor[1],
+                material.emissiveFactor[2],
+                hasEmissiveStrength ? ext->second.Get("emissiveStrength").GetNumberAsDouble() : 1.f);
+
+            //TODO: Improve this
+            if (glm::length(glm::vec3(newMaterial.emission)) > 0.f) {
+                emissiveMaterials[materials.size()] = (newMaterial.emission.r + newMaterial.emission.g + newMaterial.emission.b) * newMaterial.emission.a;
+            }
+        }
+
+        //Extract transmissiveness data
+        {
+            auto ext = material.extensions.find("KHR_materials_transmission");
+            bool hasTransmission = ext != material.extensions.end();
+
+            newMaterial.transmissiveness = hasTransmission ? ext->second.Get("transmissionFactor").GetNumberAsDouble() : 0.f;
+        }
+
+        //Extract IOR data
+        {
+            auto ext = material.extensions.find("KHR_materials_ior");
+            bool hasIor = ext != material.extensions.end();
+
+            newMaterial.ior = hasIor ? ext->second.Get("ior").GetNumberAsDouble() : 1.5f;
+        }
+
+        //TODO: Extract subsurface scattering and anisotropy data?
+
+        //Store the texture indices
+        newMaterial.colorTexIdx = pbr.baseColorTexture.index;
+        newMaterial.norTexIdx = material.normalTexture.index;
+
+        newMaterial.metallicRoughnessTexIdx = pbr.metallicRoughnessTexture.index;
+        newMaterial.emissionTexIdx = material.emissiveTexture.index;
+
+        if (pbr.baseColorTexture.index >= 0) srgbTextures.insert(model.textures[pbr.baseColorTexture.index].source);
+        if (material.emissiveTexture.index >= 0) srgbTextures.insert(model.textures[material.emissiveTexture.index].source);
+
+        materials.push_back(newMaterial);
+    }
+    newScene.materialBuffer = allocator.uploadBuffer(materials.data(), materials.size() * sizeof(Material), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        VMA_MEMORY_USAGE_GPU_ONLY);
+
     //Load geometry
+    std::unordered_map<int, LightMesh> emissiveMeshes;
 	for (const auto &mesh : model.meshes) {
 		Mesh newMesh{};
 
@@ -276,73 +352,21 @@ Scene loader::loadScene(VkDevice &device, Allocator &allocator, const std::strin
                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, VMA_MEMORY_USAGE_GPU_ONLY);
 
             newMesh.subMeshes.push_back(newSubMesh);
+
+            if (emissiveMaterials.contains(newSubMesh.materialIdx)) {
+                LightSubMesh lightSubMesh{};
+                lightSubMesh.indices = std::move(indices);
+                lightSubMesh.pos = std::move(pos);
+                lightSubMesh.mat = newSubMesh.materialIdx;
+
+                //Push
+                if (!emissiveMeshes.contains(newScene.meshes.size())) emissiveMeshes[newScene.meshes.size()] = {};
+                emissiveMeshes[newScene.meshes.size()].lightSubMeshes.push_back(lightSubMesh);
+            }
 		}
 
         newScene.meshes.push_back(newMesh);
 	}
-
-    std::unordered_set<int> srgbTextures;
-
-    //Load materials
-    std::vector<Material> materials;
-    materials.reserve(model.materials.size());
-    for (const auto &material : model.materials) {
-        Material newMaterial{};
-
-        auto pbr = material.pbrMetallicRoughness;
-
-        newMaterial.color = glm::vec4(pbr.baseColorFactor[0], 
-            pbr.baseColorFactor[1],
-            pbr.baseColorFactor[2],
-            pbr.baseColorFactor[3]);
-
-        newMaterial.metallic = pbr.metallicFactor;
-        newMaterial.roughness = pbr.roughnessFactor;
-
-        //Extract emission data
-        {
-            //Check if it supports emissive strength
-            auto ext = material.extensions.find("KHR_materials_emissive_strength");
-            bool hasEmissiveStrength = ext != material.extensions.end();
-
-            newMaterial.emission = glm::vec4(material.emissiveFactor[0],
-                material.emissiveFactor[1],
-                material.emissiveFactor[2],
-                hasEmissiveStrength ? ext->second.Get("emissiveStrength").GetNumberAsDouble() : 1.f);
-        }
-
-        //Extract transmissiveness data
-        {
-            auto ext = material.extensions.find("KHR_materials_transmission");
-            bool hasTransmission = ext != material.extensions.end();
-
-            newMaterial.transmissiveness = hasTransmission ? ext->second.Get("transmissionFactor").GetNumberAsDouble() : 0.f;
-        }
-
-        //Extract IOR data
-        {
-            auto ext = material.extensions.find("KHR_materials_ior");
-            bool hasIor = ext != material.extensions.end();
-
-            newMaterial.ior = hasIor ? ext->second.Get("ior").GetNumberAsDouble() : 1.5f;
-        }
-
-        //TODO: Extract subsurface scattering and anisotropy data?
-
-        //Store the texture indices
-        newMaterial.colorTexIdx = pbr.baseColorTexture.index;
-        newMaterial.norTexIdx = material.normalTexture.index;
-
-        newMaterial.metallicRoughnessTexIdx = pbr.metallicRoughnessTexture.index;
-        newMaterial.emissionTexIdx = material.emissiveTexture.index;
-
-        if (pbr.baseColorTexture.index >= 0) srgbTextures.insert(model.textures[pbr.baseColorTexture.index].source);
-        if (material.emissiveTexture.index >= 0) srgbTextures.insert(model.textures[material.emissiveTexture.index].source);
-
-        materials.push_back(newMaterial);
-    }
-    newScene.materialBuffer = allocator.uploadBuffer(materials.data(), materials.size() * sizeof(Material), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-        VMA_MEMORY_USAGE_GPU_ONLY);
 
     //Load the samplers
     {
@@ -469,11 +493,12 @@ Scene loader::loadScene(VkDevice &device, Allocator &allocator, const std::strin
         VMA_MEMORY_USAGE_GPU_ONLY, false);
 
     //Traverse the scene graph to load instances
+    std::vector<Instance> emissiveInstances;
     std::vector<Instance> instances;
     if (!model.scenes.empty()) {
         const tinygltf::Scene &modelScene = model.scenes[model.defaultScene >= 0 ? model.defaultScene : 0];
 
-        for (int root : modelScene.nodes) traverseSceneGraph(model, root, glm::mat4(1.f), instances);
+        for (int root : modelScene.nodes) traverseSceneGraph(model, root, glm::mat4(1.f), instances, emissiveMeshes, emissiveInstances);
     }
     else {
         //Push the meshes with default transforms
@@ -485,6 +510,50 @@ Scene loader::loadScene(VkDevice &device, Allocator &allocator, const std::strin
             instances.push_back(instance);
         }
     }
+
+    std::vector<LightTriangle> emissiveTriangles;
+    std::vector<double> emissiveWeights;
+    //Create a flat vector of emissive triangles
+    if (emissiveInstances.size() >= 0) {
+        for (const auto &emissiveInstance : emissiveInstances) {
+            LightMesh &emissiveMesh = emissiveMeshes[emissiveInstance.mesh];
+
+            for (const auto &emissiveSubMesh : emissiveMesh.lightSubMeshes) {
+                for (int i = 0; i < emissiveSubMesh.indices.size(); i += 3) {
+                    LightTriangle lt{};
+                    lt.p0 = glm::vec3(emissiveInstance.transform * glm::vec4(emissiveSubMesh.pos[emissiveSubMesh.indices[i]], 1.f));
+                    lt.p1 = glm::vec3(emissiveInstance.transform * glm::vec4(emissiveSubMesh.pos[emissiveSubMesh.indices[i + 1]], 1.f));
+                    lt.p2 = glm::vec3(emissiveInstance.transform * glm::vec4(emissiveSubMesh.pos[emissiveSubMesh.indices[i + 2]], 1.f));
+                    emissiveTriangles.push_back(lt);
+                    emissiveWeights.push_back(glm::length(glm::cross(lt.p1 - lt.p0, lt.p2 - lt.p0)) / 2.f * emissiveMaterials[emissiveSubMesh.mat]);
+                }
+            }
+        }
+    }
+    else {
+        for (const auto [k, emissiveMesh] : emissiveMeshes) {
+            for (const auto &emissiveSubMesh : emissiveMesh.lightSubMeshes) {
+                for (int i = 0; i < emissiveSubMesh.indices.size(); i += 3) {
+                    LightTriangle lt{};
+                    lt.p0 = emissiveSubMesh.pos[emissiveSubMesh.indices[i]];
+                    lt.p1 = emissiveSubMesh.pos[emissiveSubMesh.indices[i + 1]];
+                    lt.p2 = emissiveSubMesh.pos[emissiveSubMesh.indices[i + 2]];
+                    emissiveTriangles.push_back(lt);
+                    emissiveWeights.push_back(glm::length(glm::cross(lt.p1 - lt.p0, lt.p2 - lt.p0)) / 2.f * emissiveMaterials[emissiveSubMesh.mat]);
+                }
+            }
+        }
+    }
+
+    //Build the alias table for the emissive meshes
+    std::vector<float> pdf;
+    std::vector<AliasTableEntry> lightAliasTable = buildAliasTable(emissiveWeights, pdf);
+
+    //Upload to the GPU
+    newScene.lightTriangles = allocator.uploadBuffer(emissiveTriangles.data(), emissiveTriangles.size() * sizeof(LightTriangle),
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
+    newScene.lightStrengthAliasTable = allocator.uploadBuffer(lightAliasTable.data(), lightAliasTable.size() * sizeof(AliasTableEntry),
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
 
     std::vector<VkAccelerationStructureInstanceKHR> vkInstances;
     vkInstances.reserve(instances.size());
@@ -600,7 +669,9 @@ void loader::destroyScene(VkDevice &device, Allocator &allocator, Scene &scene, 
     allocator.destroyBuffer(scene.instanceBuffer);
     allocator.destroyBuffer(scene.subMeshBuffer);
 
-    //TODO: Destroy tlas for the scene
+    allocator.destroyBuffer(scene.lightStrengthAliasTable);
+    allocator.destroyBuffer(scene.lightTriangles);
+
     dispatchTable.destroyAccelerationStructureKHR(scene.tlas.as, nullptr);
     allocator.destroyBuffer(scene.tlas.buffer);
     scene.loaded = false;

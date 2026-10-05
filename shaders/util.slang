@@ -82,6 +82,11 @@ struct PointInfo {
     float2 uv = {};
 };
 
+struct AliasTableEntry {
+    float threshold;
+    uint32_t alias;
+};
+
 //Helper functions
 float3 fromOctahedral(half2 u) {
     if (u.x == -2.h && u.y == -2.h) return float3(0);

@@ -91,4 +91,23 @@ struct Scene {
 	AllocatedBuffer textureBuffer;
 
 	AccelerationStructure tlas{};
+
+	AllocatedBuffer lightTriangles;
+	AllocatedBuffer lightStrengthAliasTable;
+};
+
+struct LightSubMesh {
+	std::vector<glm::vec3> pos;
+	std::vector<uint32_t> indices;
+	uint32_t mat{ 0 };
+};
+
+struct LightMesh {
+	std::vector<LightSubMesh> lightSubMeshes;
+};
+
+struct LightTriangle {
+	glm::vec3 p0;
+	glm::vec3 p1;
+	glm::vec3 p2;
 };

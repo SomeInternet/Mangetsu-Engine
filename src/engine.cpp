@@ -9,6 +9,7 @@
 #include "init.h"
 #include "loader.h"
 #include "pushconstants.h"
+#include "aliastable.h"
 
 //Helpers to, uh, help us set up the descriptors for the shaders
 static VkDescriptorSetAndBindingMappingEXT heapMapping(uint32_t binding, VkSpirvResourceTypeFlagsEXT mask, 
@@ -391,6 +392,19 @@ void Engine::loadHdrImage(const std::string &path) {
 	extent.height = height;
 	extent.depth = 1;
 	_hdrImage = _allocator.createImage(data, extent, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_USAGE_SAMPLED_BIT, false, &_hdrImageViewCreateInfo, 4 * sizeof(float));
+	
+	std::vector<double> weights;
+	weights.reserve(width * height);
+	for (int i = 0; i < width * height; ++i) {
+		//The texture gets squished at the poles
+		double rowWeight = glm::sin((static_cast<double>(i / width) + .5f) / static_cast<double>(height) * PI);
+		weights.push_back(rowWeight * glm::length(glm::vec3(data[4 * i], data[4 * i + 1], data[4 * i + 2])));
+	}
+	std::vector<float>pdf;
+	std::vector<AliasTableEntry> envAliasTable = buildAliasTable(weights, pdf);
+
+	_envAliasTable = _allocator.uploadBuffer(envAliasTable.data(), envAliasTable.size() * sizeof(AliasTableEntry), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
+	
 	_hdrLoaded = true;
 	stbi_image_free(data);
 	writeImageDescriptor(ENGINE_IMAGES + MAX_SWAPCHAIN_SIZE, _hdrImageViewCreateInfo, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);

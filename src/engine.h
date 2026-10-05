@@ -131,6 +131,8 @@ private:
 	AllocatedImage _radianceImage;
 	VkImageViewCreateInfo _radianceImageViewCreateInfo;
 
+	AllocatedBuffer _envAliasTable;
+
 	//Deletion queue to handle object destruction
 	//TODO: VkGuide, from which I got this implementation, mentioned a better way to do it, so that's something I might want to look into
 	DeletionQueue _deletionQueue;
