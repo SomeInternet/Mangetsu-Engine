@@ -106,6 +106,7 @@ private:
 	HeapLayout _imageHeapLayout;
 	AllocatedBuffer _imageHeap;
 
+	bool _showGui{ true };
 	ImGuiIO *_io{ nullptr };
 	Camera _camera{};
 

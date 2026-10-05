@@ -68,3 +68,25 @@ void Camera::processEvent(SDL_Event e) {
 bool Camera::wasDirty() {
 	return rotDirty || viewDirty;
 }
+
+void Camera::setCamera(glm::vec3 origin, float theta, float phi) {
+	if (this->origin == origin && this->theta == theta && this->phi == phi) return;
+	viewDirty = true;
+	rotDirty = true;
+
+	this->origin = origin;
+	this->theta = theta;
+	this->phi = phi;
+}
+
+const glm::vec3 &Camera::getOrigin() {
+	return origin;
+}
+
+const float &Camera::getTheta() {
+	return theta;
+}
+
+const float &Camera::getPhi() {
+	return phi;
+}

@@ -16,6 +16,11 @@ public:
 
 	const glm::mat4 &getView();
 	const glm::mat4 &getRot();
+
+	void setCamera(glm::vec3 origin, float theta, float phi);
+	const glm::vec3 &getOrigin();
+	const float &getTheta();
+	const float &getPhi();
 	
 	void processEvent(SDL_Event e);
 

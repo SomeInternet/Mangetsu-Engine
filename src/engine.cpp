@@ -658,6 +658,17 @@ void Engine::drawImgui(VkCommandBuffer commandBuffer, VkImageView targetImageVie
 	if (lensRadius != _pcpt.lensRadius) _frameNum = 0;
 	_pcpt.lensRadius = lensRadius;
 
+	float theta = _camera.getTheta();
+	ImGui::InputFloat("Theta", &theta);
+
+	float phi = _camera.getPhi();
+	ImGui::InputFloat("Phi", &phi);
+
+	glm::vec3 origin = _camera.getOrigin();
+	ImGui::InputFloat3("Origin", reinterpret_cast<float *>(&origin));
+
+	_camera.setCamera(origin, theta, phi);
+
 	ImGui::End();
 	ImGui::Render();
 
@@ -685,8 +696,6 @@ void Engine::draw() {
 	}
 
 	VK_CHECK(vkResetFences(_device, 1, &currFrame._renderFence));
-
-	//TODO: Fill in the frame's loop here
 	
 	VkCommandBuffer commandBuffer = currFrame._commandBuffer;
 
@@ -743,12 +752,18 @@ void Engine::draw() {
 	_dispatchTable.cmdPushDataEXT(commandBuffer, &pushDataPost);
 	vkCmdDispatch(commandBuffer, (_swapChainExtent.width + 15) / 16, (_swapChainExtent.height + 15) / 16, 1);
 
-	util::transitionImageLayout(commandBuffer, _swapChainImages[swapChainImageIndex], VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+	if (_showGui) {
+		util::transitionImageLayout(commandBuffer, _swapChainImages[swapChainImageIndex], VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
-	drawImgui(commandBuffer, _swapChainImageViews[swapChainImageIndex]);
+		drawImgui(commandBuffer, _swapChainImageViews[swapChainImageIndex]);
 
-	//Transition image for presentation
-	util::transitionImageLayout(commandBuffer, _swapChainImages[swapChainImageIndex], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+		//Transition image for presentation
+		util::transitionImageLayout(commandBuffer, _swapChainImages[swapChainImageIndex], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+	}
+	else {
+		util::transitionImageLayout(commandBuffer, _swapChainImages[swapChainImageIndex], VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+	}
+	
 
 	VK_CHECK(vkEndCommandBuffer(commandBuffer));
 
@@ -833,7 +848,7 @@ void Engine::init() {
 	_loaded = true;
 
 	//Load default scene
-	std::string path = "./models/bistro.glb";
+	std::string path = "./models/cornellbox_transmission.glb";
 	loadScene(path);
 
 	initPipelinePathtracer();
@@ -860,6 +875,8 @@ void Engine::run() {
 			if (e.type == SDL_EVENT_WINDOW_RESTORED) _minimized = false;
 
 			if (e.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) _resize = true;
+
+			if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_S) _showGui = !_showGui;
 
 			//TODO: Handle camera movement
 			if (!_io->WantCaptureMouse) {
