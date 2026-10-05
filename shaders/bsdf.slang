@@ -180,6 +180,7 @@ float roughness, float3 f, float transmissiveness, inout float etaA, float etaB,
 
         if (rand < f.x * pr) { // Specular reflection
             pr *= f.x;
+            if (wi.z < 0.f) return float3(0.f);
             return d(wh, alpha2) * g(wo, wi, alpha2) / abs(4.f * wo.z);
         } else {
             rand -= f.x * pr;

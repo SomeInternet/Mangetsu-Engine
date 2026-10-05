@@ -65,23 +65,19 @@ struct PushConstantsPathtracer {
 
 struct HitPayload {
     float4 throughput = {};
-    float3x3 orientation = {};
-    float3 emissiveness = {}; 
 
     //TODO: Add weight for RR?
     float3 rayOrigin = {};
     float3 rayDir = {};
 
     float ior = 1.f; //ior of the previous material
-
-    float weight = 1.f;
     int depth = 0;
 
     uint2 seed = 0;
 };
 
 struct PointInfo {
-    float3x3 orientation = {};
+    float3x3 tbn = {};
     float3 nor = {};
     float2 uv = {};
 };
@@ -140,8 +136,8 @@ inline PointInfo getPointInfo(uint subMeshIdx, uint primitiveIdx, float3 barycen
         tangent = abs(res.nor.x) > abs(res.nor.y) ? float3(-res.nor.z, 0.f, res.nor.x) / sqrt(res.nor.x * res.nor.x + res.nor.z * res.nor.z) :
             float3(0.f, res.nor.z, -res.nor.y) / sqrt(res.nor.y * res.nor.y + res.nor.z * res.nor.z);
     }
-    tangent = normalize(tangent);
-    res.orientation = float3x3(tangent, cross(res.nor, tangent), res.nor); // TODO: might have to change this for left-handed spaces
+    tangent = normalize(tangent - res.nor * dot(res.nor, tangent));
+    res.tbn = float3x3(tangent, cross(res.nor, tangent), res.nor); // TODO: might have to change this for left-handed spaces
     res.nor = nor;
     return res;
 }
@@ -172,4 +168,16 @@ inline float3 toHemisphereCosineWeighted(float2 xi) {
 
 inline float3 toHemisphereUniform(float2 xi) {
     return float3(cos(2.f * PI * xi.y) * sqrt(1.f - xi.x * xi.x), sin(2.f * PI * xi.y) * sqrt(1.f - xi.x * xi.x), xi.x);
+}
+
+
+
+inline float3x3 applyNormalMap(float3x3 tbn, float3 mNor) {
+    mNor = normalize(mNor * 2.f - 1.f);
+
+    float3 nNor = normalize(mul(mNor, tbn));
+    float3 nTan = normalize(tbn[0] - nNor * dot(tbn[0], nNor));
+    float3 nBit = cross(nTan, nNor);
+
+    return float3x3(nTan, nBit, nNor);
 }

@@ -55,8 +55,8 @@ void rayGeneration() {
         HitObject::Invoke<HitPayload>(tlas, hitObject, payload);       
         
         if (hitObject.IsHit()) {
-            if (length(payload.emissiveness) > 0.f) {
-                finalColor += throughput * payload.emissiveness;
+            if (payload.throughput.a > 0.f) {
+                finalColor += throughput * payload.throughput.rgb;
                 break;
             }
 
@@ -65,7 +65,7 @@ void rayGeneration() {
             ray.Direction = payload.rayDir;
             ++payload.depth;
         } else {
-            finalColor += throughput * payload.emissiveness;
+            finalColor += throughput * payload.throughput.rgb;
             break;
         }
 
@@ -91,24 +91,32 @@ void closestHit(inout HitPayload payload, in BuiltInTriangleIntersectionAttribut
 
     bool entering = dot(ObjectRayDirection(), pointInfo.nor) < 0.f;
     if (dot(ObjectRayDirection(), pointInfo.nor) > 0.f) pointInfo.nor *= -1.f;
-    if (dot(pointInfo.nor, pointInfo.orientation[2]) < 0.f) pointInfo.orientation *= -1.f;
-
-    //if (HitKind() == HIT_KIND_TRIANGLE_BACK_FACE) pointInfo.orientation *= -1;// On a back face hit, flip the orientation
+    if (dot(pointInfo.nor, pointInfo.tbn[2]) < 0.f) pointInfo.tbn *= -1.f;
 
     //TODO: Consider an alternative to my current solution to a material index being 0
     Material material = pc.materials[max(pc.deviceSubMeshes[subMeshIdx].materialIdx, 0)];
 
-    if (length(material.emission.rgb) > 0) {
+    //Emissive
+    if (length(material.emission.rgb) > 0.f) {
         float3 emissionColor = material.emission.rgb * (material.emissionTexIdx != -1 ? 
         sceneImages[NonUniformResourceIndex(pc.textures[material.emissionTexIdx].imageIdx)]
                        .SampleLevel(samplers[NonUniformResourceIndex( pc.textures[material.emissionTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f).rgb : 
         float3(1.f));
 
-        payload.emissiveness = emissionColor * material.emission[3];
+        payload.throughput = float4(emissionColor * material.emission[3], 1.f);
         return;
     }
 
-    float3 wo = -normalize(mul(pointInfo.orientation, mul(WorldToObject3x4(), float4(WorldRayDirection(), 0.f)).xyz));
+    // Normal map
+    if (material.norTexIdx >= 0) {
+        Texture tex = pc.textures[material.norTexIdx];
+        float3 mNor = sceneImages[NonUniformResourceIndex(tex.imageIdx)]
+            .SampleLevel(samplers[NonUniformResourceIndex(tex.samplerIdx + 1)], pointInfo.uv, 0.f).rgb;
+
+        pointInfo.tbn = applyNormalMap(pointInfo.tbn, mNor);
+    }
+
+    float3 wo = -normalize(mul(pointInfo.tbn, mul(WorldToObject3x4(), float4(WorldRayDirection(), 0.f)).xyz));
     float roughness;
     {
         roughness = material.roughness * (material.metallicRoughnessTexIdx != -1 ? 
@@ -158,11 +166,11 @@ void closestHit(inout HitPayload payload, in BuiltInTriangleIntersectionAttribut
             pdf = pdfCookTorrance(wo, wh, wi, albedo.rgb, metallic, roughness, f, transmissiveness, etaA, etaB, rand);
 
         }
-        payload.throughput = float4(bsdf / pdf, 1.f);
+        payload.throughput = float4(bsdf / pdf, 0.f);
     }
 
-    payload.rayDir = normalize(mul(ObjectToWorld3x4(), float4(mul(transpose(pointInfo.orientation), wi), 0.f)).xyz);
-    payload.rayOrigin = WorldRayOrigin() + WorldRayDirection() * RayTCurrent() + normalize(mul(ObjectToWorld3x4(), float4(mul(transpose(pointInfo.orientation), float3(0.f, 0.f, 1.f)), 0.f))) * sign(wi.z) * EPSILON;
+    payload.rayDir = normalize(mul(ObjectToWorld3x4(), float4(mul(transpose(pointInfo.tbn), wi), 0.f)).xyz);
+    payload.rayOrigin = WorldRayOrigin() + WorldRayDirection() * RayTCurrent() + normalize(mul(ObjectToWorld3x4(), float4(mul(transpose(pointInfo.tbn), float3(0.f, 0.f, 1.f)), 0.f))) * sign(wi.z) * EPSILON;
     payload.seed = seed;
 }
 
@@ -171,7 +179,7 @@ void miss(inout HitPayload payload) {
     float2 uv = float2(atan2(WorldRayDirection().z, WorldRayDirection().x), asin(WorldRayDirection().y));
     uv *= float2(1.f / (2.f * PI), -1.f / PI); //v is flipped
     uv += float2(.5f);
-    payload.emissiveness = hdrImage.SampleLevel(samplers[0], uv, 0.f).rgb;
+    payload.throughput = float4(hdrImage.SampleLevel(samplers[0], uv, 0.f).rgb, 1.f);
     payload.depth = MAX_BOUNCES;
 }
 
