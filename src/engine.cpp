@@ -848,7 +848,7 @@ void Engine::init() {
 	_loaded = true;
 
 	//Load default scene
-	std::string path = "./models/cornellbox_transmission.glb";
+	std::string path = "./models/bistro.glb";
 	loadScene(path);
 
 	initPipelinePathtracer();
