@@ -20,6 +20,21 @@ Texture2D<float4> hdrImage;
 [[vk::push_constant]]
 PushConstantsPathtracer pc;
 
+//Tests if the ray hit anything in the scene before it would reach whatever is tMax away in the direction
+//Having hit nothing means that we can see the light
+inline bool shadowRayCast(float3 origin, float3 dir, float tMax) {
+    RayDesc r;
+    r.Origin = origin;
+    r.Direction = dir;
+    r.TMin = EPSILON;
+    r.TMax = tMax;
+
+    RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_FORCE_OPAQUE> q;
+    q.TraceRayInline(tlas, RAY_FLAG_NONE, 0xFF, r);
+    q.Proceed();
+    return q.CommittedStatus() == COMMITTED_NOTHING;
+}
+
 [shader("raygeneration")]
 void rayGeneration() {
     seed = DispatchRaysIndex().xy * uint2(1973, 9277) + pc.frameNum * uint2(26699, 7919);
@@ -69,6 +84,8 @@ void rayGeneration() {
             break;
         }
 
+        //MIS
+
         seed = payload.seed;
     }
 
@@ -93,14 +110,14 @@ void closestHit(inout HitPayload payload, in BuiltInTriangleIntersectionAttribut
     if (dot(ObjectRayDirection(), pointInfo.nor) > 0.f) pointInfo.nor *= -1.f;
     if (dot(pointInfo.nor, pointInfo.tbn[2]) < 0.f) pointInfo.tbn *= -1.f;
 
-    //TODO: Consider an alternative to my current solution to a material index being 0
-    Material material = pc.materials[max(pc.deviceSubMeshes[subMeshIdx].materialIdx, 0)];
+    // TODO: Consider an alternative to my current solution to a material index being 0
+    Material material = pc.sceneData->materials[max(pc.sceneData->deviceSubMeshes[subMeshIdx].materialIdx, 0)];
 
     //Emissive
     if (length(material.emission.rgb) > 0.f) {
         float3 emissionColor = material.emission.rgb * (material.emissionTexIdx != -1 ? 
-        sceneImages[NonUniformResourceIndex(pc.textures[material.emissionTexIdx].imageIdx)]
-                       .SampleLevel(samplers[NonUniformResourceIndex( pc.textures[material.emissionTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f).rgb : 
+        sceneImages[NonUniformResourceIndex(pc.sceneData->textures[material.emissionTexIdx].imageIdx)]
+                       .SampleLevel(samplers[NonUniformResourceIndex( pc.sceneData->textures[material.emissionTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f).rgb : 
         float3(1.f));
 
         payload.throughput = float4(emissionColor * material.emission[3], 1.f);
@@ -109,7 +126,7 @@ void closestHit(inout HitPayload payload, in BuiltInTriangleIntersectionAttribut
 
     // Normal map
     if (material.norTexIdx >= 0) {
-        Texture tex = pc.textures[material.norTexIdx];
+        Texture tex = pc.sceneData->textures[material.norTexIdx];
         float3 mNor = sceneImages[NonUniformResourceIndex(tex.imageIdx)]
             .SampleLevel(samplers[NonUniformResourceIndex(tex.samplerIdx + 1)], pointInfo.uv, 0.f).rgb;
 
@@ -120,8 +137,8 @@ void closestHit(inout HitPayload payload, in BuiltInTriangleIntersectionAttribut
     float roughness;
     {
         roughness = material.roughness * (material.metallicRoughnessTexIdx != -1 ? 
-        sceneImages[NonUniformResourceIndex(pc.textures[material.metallicRoughnessTexIdx].imageIdx)]
-                               .SampleLevel(samplers[NonUniformResourceIndex( pc.textures[material.metallicRoughnessTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f)[1] : 
+        sceneImages[NonUniformResourceIndex( pc.sceneData->textures[material.metallicRoughnessTexIdx].imageIdx)]
+                       .SampleLevel(samplers[NonUniformResourceIndex( pc.sceneData->textures[material.metallicRoughnessTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f)[1] : 
         1.f);
     }
     roughness = max(roughness, .00001f);
@@ -129,8 +146,8 @@ void closestHit(inout HitPayload payload, in BuiltInTriangleIntersectionAttribut
     float metallic;
     {
         metallic = material.metallic * (material.metallicRoughnessTexIdx != -1 ? 
-        sceneImages[NonUniformResourceIndex(pc.textures[material.metallicRoughnessTexIdx].imageIdx)]
-                               .SampleLevel(samplers[NonUniformResourceIndex( pc.textures[material.metallicRoughnessTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f)[2] : 
+        sceneImages[NonUniformResourceIndex( pc.sceneData->textures[material.metallicRoughnessTexIdx].imageIdx)]
+                       .SampleLevel(samplers[NonUniformResourceIndex( pc.sceneData->textures[material.metallicRoughnessTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f)[2] : 
         1.f);
     }
 
@@ -147,8 +164,8 @@ void closestHit(inout HitPayload payload, in BuiltInTriangleIntersectionAttribut
     float3 wi;
     {
         float4 albedo = material.color * (material.colorTexIdx != -1 ? 
-        sceneImages[NonUniformResourceIndex(pc.textures[material.colorTexIdx].imageIdx)]
-        .SampleLevel( samplers[NonUniformResourceIndex(pc.textures[material.colorTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f) : 
+        sceneImages[NonUniformResourceIndex(pc.sceneData->textures[material.colorTexIdx].imageIdx)]
+        .SampleLevel( samplers[NonUniformResourceIndex(pc.sceneData->textures[material.colorTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f) : 
         float4(1.f));
 
         float3 bsdf;

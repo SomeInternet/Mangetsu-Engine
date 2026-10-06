@@ -94,6 +94,8 @@ struct Scene {
 
 	AllocatedBuffer lightTriangles;
 	AllocatedBuffer lightStrengthAliasTable;
+	uint32_t nLights{ 0 };
+	float totalLightWeight{ 0.f };
 };
 
 struct LightSubMesh {

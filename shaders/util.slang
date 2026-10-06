@@ -44,16 +44,39 @@ struct Material {
     int emissionTexIdx;
 };
 
+struct AliasTableEntry {
+    float threshold;
+    uint32_t alias;
+};
+
+struct LightTriangle {
+    float3 p0;
+    float3 p1;
+    float3 p2;
+};
+
+struct SceneData {
+    DeviceSubMesh *deviceSubMeshes;
+    Material *materials;
+    Texture *textures;
+
+    LightTriangle *lightTriangles;
+    AliasTableEntry *lightAliasTable;
+    AliasTableEntry *envAliasTable;
+
+    uint32_t nLights = 0;
+    float totalLightWeight = 0.f;
+    float totalEnvWeight = 0.f;
+};
+
 struct PushConstantsPathtracer {
     float3 camPos;
     float3 camForward;
     float3 camRight;
     float3 camUp;
 
-    DeviceSubMesh *deviceSubMeshes;
-    Material *materials;
-    Texture *textures;
     RaytracingAccelerationStructure *tlas;
+    SceneData *sceneData;
 
     float fov;
     uint32_t frameNum;
@@ -61,6 +84,15 @@ struct PushConstantsPathtracer {
 
     float lensRadius = 0.f;
     float focusDist = 1.f;
+};
+
+struct MaterialParams {
+    float3 albedo;
+    float metallic;
+    float roughness;
+    float transmissiveness;
+    float etaA;
+    float etaB;
 };
 
 struct HitPayload {
@@ -80,11 +112,6 @@ struct PointInfo {
     float3x3 tbn = {};
     float3 nor = {};
     float2 uv = {};
-};
-
-struct AliasTableEntry {
-    float threshold;
-    uint32_t alias;
 };
 
 //Helper functions
@@ -111,24 +138,37 @@ float rand() {
     return float(n) * (1.0 / float(0xffffffffU));
 }
 
+inline uint32_t sampleAliasTable(AliasTableEntry *aliasTable, uint32_t n, float rand1, float rand2) {
+    AliasTableEntry entry = aliasTable[(uint32_t)(rand1 * n)];
+    return (rand2 > entry.threshold) ? entry.alias : (uint32_t)(rand1 * n);
+}
+
+inline float3 sampleLightTriangle(LightTriangle lightTriangle, float2 xi, out float2 barycentrics) {
+    float s = sqrt(xi.x);
+    float u = 1.f - s;
+    float v = xi.y * s;
+    barycentrics = float2(u, v);
+    return u * lightTriangle.p0 + v * lightTriangle.p1 + (1.f - u - v) * lightTriangle.p2;
+}
+
 inline PointInfo getPointInfo(uint subMeshIdx, uint primitiveIdx, float3 barycentrics, PushConstantsPathtracer pc) {
     float3 nor;
     {
-        float3 *posBuffer = pc.deviceSubMeshes[subMeshIdx].posBuffer;
-        float3 p0 = posBuffer[pc.deviceSubMeshes[subMeshIdx].indexBuffer[primitiveIdx * 3]];
-        float3 p1 = posBuffer[pc.deviceSubMeshes[subMeshIdx].indexBuffer[primitiveIdx * 3 + 1]];
-        float3 p2 = posBuffer[pc.deviceSubMeshes[subMeshIdx].indexBuffer[primitiveIdx * 3 + 2]];
+        float3 *posBuffer = pc.sceneData->deviceSubMeshes[subMeshIdx].posBuffer;
+        float3 p0 = posBuffer[pc.sceneData->deviceSubMeshes[subMeshIdx].indexBuffer[primitiveIdx * 3]];
+        float3 p1 = posBuffer[pc.sceneData->deviceSubMeshes[subMeshIdx].indexBuffer[primitiveIdx * 3 + 1]];
+        float3 p2 = posBuffer[pc.sceneData->deviceSubMeshes[subMeshIdx].indexBuffer[primitiveIdx * 3 + 2]];
         nor = normalize(cross(p1 - p0, p2 - p0));
     }
 
-    Vertex *vertices = pc.deviceSubMeshes[subMeshIdx].vertexBuffer;
+    Vertex *vertices = pc.sceneData->deviceSubMeshes[subMeshIdx].vertexBuffer;
 
     float3 tangent = float3(0.f);
 
     PointInfo res = {};
     [ForceUnroll] //Loop unrolling, yay!
     for (int i = 0; i < 3; ++i) {
-        Vertex v = vertices[pc.deviceSubMeshes[subMeshIdx].indexBuffer[primitiveIdx * 3 + i]];
+        Vertex v = vertices[pc.sceneData->deviceSubMeshes[subMeshIdx].indexBuffer[primitiveIdx * 3 + i]];
 
         res.nor += barycentrics[i] * fromOctahedral(v.nor);
         res.uv += barycentrics[i] * float2(v.uv.x, v.uv.y);
@@ -174,8 +214,6 @@ inline float3 toHemisphereCosineWeighted(float2 xi) {
 inline float3 toHemisphereUniform(float2 xi) {
     return float3(cos(2.f * PI * xi.y) * sqrt(1.f - xi.x * xi.x), sin(2.f * PI * xi.y) * sqrt(1.f - xi.x * xi.x), xi.x);
 }
-
-
 
 inline float3x3 applyNormalMap(float3x3 tbn, float3 mNor) {
     mNor = normalize(mNor * 2.f - 1.f);

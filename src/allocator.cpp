@@ -73,6 +73,7 @@ AllocatedBuffer Allocator::createBuffer(size_t allocSize, VkBufferUsageFlags usa
 	VkBufferDeviceAddressInfo info = { .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, .buffer = newBuffer.buffer };
 	newBuffer.address = vkGetBufferDeviceAddress(_device, &info);
 
+	newBuffer.loaded = true;
 	return newBuffer;
 }
 
@@ -96,8 +97,9 @@ AllocatedBuffer Allocator::uploadBuffer(void *data, size_t allocSize, VkBufferUs
 	return newBuffer;
 }
 
-void Allocator::destroyBuffer(const AllocatedBuffer &buffer) {
+void Allocator::destroyBuffer(AllocatedBuffer &buffer) {
 	vmaDestroyBuffer(_allocator, buffer.buffer, buffer.allocation);
+	buffer.loaded = false;
 }
 
 //Propagates changes to CPU-side mapped memory to the GPU

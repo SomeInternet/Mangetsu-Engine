@@ -7,6 +7,7 @@ struct AllocatedBuffer {
 	VkDeviceAddress address;
 	VmaAllocation allocation;
 	VmaAllocationInfo info;
+	bool loaded{ false };
 };
 
 struct AllocatedImage {
@@ -31,7 +32,7 @@ public:
 	//Buffers
 	AllocatedBuffer createBuffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage, bool createMapping = true, size_t minAlignment = 0);
 	AllocatedBuffer uploadBuffer(void *data, size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage, bool createMapping = true, size_t minAlignment = 0);
-	void destroyBuffer(const AllocatedBuffer &buffer);
+	void destroyBuffer(AllocatedBuffer &buffer);
 
 	void flush(const AllocatedBuffer &buffer);
 

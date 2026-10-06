@@ -97,7 +97,7 @@ static void traverseSceneGraph(const tinygltf::Model &model, int nodeIdx, const 
     }
 
     //Recurse on children
-    for (int childIdx : node.children) traverseSceneGraph(model, childIdx, worldMatrix, instances);
+    for (int childIdx : node.children) traverseSceneGraph(model, childIdx, worldMatrix, instances, emissiveMeshes, emissiveInstances);
 }
 
 //Adapted from the Vulkan docs tutorial
@@ -514,7 +514,7 @@ Scene loader::loadScene(VkDevice &device, Allocator &allocator, const std::strin
     std::vector<LightTriangle> emissiveTriangles;
     std::vector<double> emissiveWeights;
     //Create a flat vector of emissive triangles
-    if (emissiveInstances.size() >= 0) {
+    if (!model.scenes.empty()) {
         for (const auto &emissiveInstance : emissiveInstances) {
             LightMesh &emissiveMesh = emissiveMeshes[emissiveInstance.mesh];
 
@@ -531,7 +531,7 @@ Scene loader::loadScene(VkDevice &device, Allocator &allocator, const std::strin
         }
     }
     else {
-        for (const auto [k, emissiveMesh] : emissiveMeshes) {
+        for (const auto &[k, emissiveMesh] : emissiveMeshes) {
             for (const auto &emissiveSubMesh : emissiveMesh.lightSubMeshes) {
                 for (int i = 0; i < emissiveSubMesh.indices.size(); i += 3) {
                     LightTriangle lt{};
@@ -545,9 +545,10 @@ Scene loader::loadScene(VkDevice &device, Allocator &allocator, const std::strin
         }
     }
 
+    newScene.nLights = emissiveWeights.size();
     //Build the alias table for the emissive meshes
     std::vector<float> pdf;
-    std::vector<AliasTableEntry> lightAliasTable = buildAliasTable(emissiveWeights, pdf);
+    std::vector<AliasTableEntry> lightAliasTable = buildAliasTable(emissiveWeights, pdf, &newScene.totalLightWeight);
 
     //Upload to the GPU
     newScene.lightTriangles = allocator.uploadBuffer(emissiveTriangles.data(), emissiveTriangles.size() * sizeof(LightTriangle),

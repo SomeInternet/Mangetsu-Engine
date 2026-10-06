@@ -181,7 +181,7 @@ float roughness, float3 f, float transmissiveness, inout float etaA, float etaB,
         if (rand < f.x * pr) { // Specular reflection
             pr *= f.x;
             if (wi.z < 0.f) return float3(0.f);
-            return d(wh, alpha2) * g(wo, wi, alpha2) / abs(4.f * wo.z);
+            return d(wh, alpha2) * g(wo, wi, alpha2) * pr / abs(4.f * wo.z);
         } else {
             rand -= f.x * pr;
             pr *= (1.f - f.x);
@@ -189,15 +189,16 @@ float roughness, float3 f, float transmissiveness, inout float etaA, float etaB,
                 float denom = dot(wi, wh) + dot(wo, wh) * etaA / etaB;
                 denom *= denom * max(wo.z, EPSILON) * etaB / etaA * etaB / etaA;
 
-                return albedo * d(wh, alpha2) * g(wo, wi, alpha2) * abs(dot(wo, wh) * dot(wi, wh) / (denom));
+                return albedo * d(wh, alpha2) * g(wo, wi, alpha2) * abs(dot(wo, wh) * dot(wi, wh) * pr / (denom));
             } else { // Diffuse BRDF
-                return albedo * max(wi.z, 0.f) / PI;
+                pr *= (1.f - transmissiveness);
+                return albedo * max(wi.z, 0.f) * pr / PI;
             }
         }
     } else { // Sample the metallic lobe
         pr *= metallic;
         float3 f0 = (1.f - metallic) * float3(.04f) + metallic * albedo;
-        return brdfTorranceSparrow(wo, wi, albedo, roughness);
+        return brdfTorranceSparrow(wo, wi, albedo, roughness) * pr;
     }
 }
 
@@ -209,19 +210,77 @@ float roughness, float3 f, float transmissiveness, float etaA, float etaB, float
         pr *= 1.f - metallic;
 
         if (rand < f.x * pr) { // Specular reflection
-            return pdfTorranceSparrow(wo, wh, roughness);
+            pr *= f.x;
+            return pdfTorranceSparrow(wo, wh, roughness) * pr;
         } else {
             rand -= f.x * pr;
             pr *= (1.f - f.x);
 
             if (rand < transmissiveness * pr) { // Specular BTDF
+                pr *= transmissiveness;
                 float s = dot(wi, wh) + dot(wo, wh) * etaA / etaB;
-                return pdfTorranceSparrow(wo, wh, roughness) * 4.f * abs(dot(wo, wh)) * abs(dot(wi, wh)) / (s * s);
+                return pdfTorranceSparrow(wo, wh, roughness) * 4.f * abs(dot(wo, wh)) * abs(dot(wi, wh)) * pr / (s * s);
             } else { // Diffuse BRDF
-                return wi.z / PI;
+                pr *= (1.f - transmissiveness);
+                return wi.z * pr / PI;
             }
         }
     } else { // Sample the metallic lobe
-        return pdfTorranceSparrow(wo, wh, roughness);
+        pr *= metallic;
+        return pdfTorranceSparrow(wo, wh, roughness) * pr;
     }
+}
+
+inline float3 evalBsdfCookTorrance(float3 wo, float3 wi, MaterialParams matParams) {
+    float3 f = fDielectric(wo, float3(0, 0, 1), matParams.etaA, matParams.etaB);
+    float pMetal = matParams.metallic;
+    float pSpecularReflection = (1.f - pMetal) * f.x;
+    float pDiffuseReflection = (1.f - pSpecularReflection - pMetal) * (1.f - matParams.transmissiveness);
+    float pSpecularTrans = (1.f - pDiffuseReflection - pSpecularReflection - pMetal);
+
+    float3 wh = normalize(wo + wi);
+    float alpha2 = matParams.roughness * matParams.roughness * matParams.roughness * matParams.roughness;
+
+    float3 whT = normalize(matParams.etaA * wo + matParams.etaB * wi);
+    if (whT.z < 0.f) whT = -whT;
+
+    float denom = dot(wi, whT) + dot(wo, whT) * matParams.etaA / matParams.etaB;
+    denom *= denom * max(wo.z, EPSILON) * matParams.etaB / matParams.etaA * matParams.etaB / matParams.etaA;
+
+    return pMetal * ((wi.z < 0.f) ? float3(0.f) : brdfTorranceSparrow(wo, wi, matParams.albedo, matParams.roughness)) +
+           pSpecularReflection * ((wi.z < 0.f) ? float3(0.f) : d(wh, alpha2) * g(wo, wi, alpha2) / abs(4.f * wo.z)) +
+           pDiffuseReflection * max(wi.z, 0.f) * matParams.albedo / PI +
+           pSpecularTrans * ((dot(whT, wi) >= 0.f || dot(whT, wo) < 0.f || matParams.etaA == matParams.etaB) ? float3(0.f) 
+           : matParams.albedo * d(whT, alpha2) * g(wo, wi, alpha2) * abs(dot(wo, whT) * dot(wi, whT) / (denom)));
+}
+
+inline float evalCookTorrance(float3 wo, float3 wi, MaterialParams matParams) {
+    float3 f = fDielectric(wo, float3(0, 0, 1), matParams.etaA, matParams.etaB);
+    float pMetal = matParams.metallic;
+    float pSpecularReflection = (1.f - pMetal) * f.x;
+    float pDiffuseReflection = (1.f - pSpecularReflection - pMetal) * (1.f - matParams.transmissiveness);
+    float pSpecularTrans = (1.f - pDiffuseReflection - pSpecularReflection - pMetal);
+
+    float3 wh = normalize(wo + wi);
+    float alpha2 = matParams.roughness * matParams.roughness * matParams.roughness * matParams.roughness;
+
+    float3 whT = normalize(matParams.etaA * wo + matParams.etaB * wi);
+    if (whT.z < 0.f) whT = -whT;
+
+    float s = dot(wi, whT) + dot(wo, whT) * matParams.etaA / matParams.etaB;
+
+    return pMetal * ((wi.z < 0.f) ? 0.f : pdfTorranceSparrow(wo, wh, matParams.roughness))) +
+           pSpecularReflection * ((wi.z < 0.f) ? 0.f : pdfTorranceSparrow(wo, wh, matParams.roughness)) +
+           pDiffuseReflection * max(wi.z, 0.f) / PI +
+           pSpecularTrans * ((dot(whT, wi) >= 0.f || dot(whT, wo) < 0.f || matParams.etaA == matParams.etaB) ? 0.f : 
+           pdfTorranceSparrow(wo, whT, matParams.roughness) * 4.f * abs(dot(wo, whT)) * abs(dot(wi, whT)) / (s * s));
+}
+
+inline float powerHeuristic(int nf, float fPdf, int ng, float gPdf) {
+    float denom = (float(nf) * fPdf) * (float(nf) * fPdf) + (float(ng) * gPdf) * (float(ng) * gPdf);
+    if (denom == 0.f) {
+        return 0.f;
+    }
+
+    return (float(nf) * fPdf) * (float(nf) * fPdf) / denom;
 }

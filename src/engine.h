@@ -110,10 +110,12 @@ private:
 	ImGuiIO *_io{ nullptr };
 	Camera _camera{};
 
-	PushConstantsPathtracer _pcpt{};
-
 	//Vulkan raytracing objects
 	Scene _scene{};
+
+	PushConstantsPathtracer _pcpt{};
+	SceneData _sceneData{};
+	AllocatedBuffer _sceneDataBuffer;
 
 	//IBL
 	bool _hdrLoaded{ false };

@@ -1,9 +1,10 @@
 #include "aliastable.h"
 
 //This is actually such a cool data structure
-std::vector<AliasTableEntry> buildAliasTable(const std::vector<double> &weights, std::vector<float> &pdf) {
+std::vector<AliasTableEntry> buildAliasTable(const std::vector<double> &weights, std::vector<float> &pdf, float *totalWeight /*= nullptr*/) {
 	size_t n = weights.size();
 	double sum = std::accumulate(weights.begin(), weights.end(), 0.0);
+	if (totalWeight) *totalWeight = static_cast<float>(sum);
 	if (sum == 0.0) return std::vector<AliasTableEntry>();
 
 	std::vector<AliasTableEntry> table(n);

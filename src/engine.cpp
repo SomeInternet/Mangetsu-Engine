@@ -401,10 +401,14 @@ void Engine::loadHdrImage(const std::string &path) {
 		weights.push_back(rowWeight * glm::length(glm::vec3(data[4 * i], data[4 * i + 1], data[4 * i + 2])));
 	}
 	std::vector<float>pdf;
-	std::vector<AliasTableEntry> envAliasTable = buildAliasTable(weights, pdf);
+	std::vector<AliasTableEntry> envAliasTable = buildAliasTable(weights, pdf, &_sceneData.totalEnvWeight);
 
+	if (_envAliasTable.loaded) _allocator.destroyBuffer(_envAliasTable);
 	_envAliasTable = _allocator.uploadBuffer(envAliasTable.data(), envAliasTable.size() * sizeof(AliasTableEntry), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
-	
+	_sceneData.envAliasTable = _envAliasTable.address;
+	if (_sceneDataBuffer.loaded) _allocator.destroyBuffer(_sceneDataBuffer);
+	_sceneDataBuffer = _allocator.uploadBuffer(&_sceneData, sizeof(SceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
+
 	_hdrLoaded = true;
 	stbi_image_free(data);
 	writeImageDescriptor(ENGINE_IMAGES + MAX_SWAPCHAIN_SIZE, _hdrImageViewCreateInfo, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -456,10 +460,24 @@ void Engine::writeImageDescriptor(uint32_t slot, const VkImageViewCreateInfo &vi
 void Engine::loadScene(const std::string &file) {
 	vkDeviceWaitIdle(_device);
 
+	if (_sceneDataBuffer.loaded) _allocator.destroyBuffer(_sceneDataBuffer);
+
 	if (_scene.loaded) loader::destroyScene(_device, _allocator, _scene, _dispatchTable);
+
 	//TODO: Reset scene descriptors?
 
 	_scene = loader::loadScene(_device, _allocator, file, _deviceProperties, _dispatchTable);
+
+	//Set up scene data struct
+	if (_sceneDataBuffer.loaded) _allocator.destroyBuffer(_sceneDataBuffer);
+	_sceneData.deviceSubMeshes = _scene.subMeshBuffer.address;
+	_sceneData.materials = _scene.materialBuffer.address;
+	_sceneData.textures = _scene.textureBuffer.address;
+	_sceneData.lightAliasTable = _scene.lightStrengthAliasTable.address;
+	_sceneData.lightTriangles = _scene.lightTriangles.address;
+	_sceneData.totalLightWeight = _scene.totalLightWeight;
+	_sceneData.nLights = _scene.nLights;
+	_sceneDataBuffer = _allocator.uploadBuffer(&_sceneData, sizeof(SceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
 
 	writeSceneDescriptors();
 }
@@ -738,10 +756,8 @@ void Engine::draw() {
 		
 	_camera.toPushConstantsPathtracer(_pcpt);
 	_pcpt.frameNum = _frameNum;
-	_pcpt.deviceSubMeshes = _scene.subMeshBuffer.address;
-	_pcpt.materials = _scene.materialBuffer.address;
-	_pcpt.textures = _scene.textureBuffer.address;
 	_pcpt.tlas = _scene.tlas.address;
+	_pcpt.sceneData = _sceneDataBuffer.address;
 
 	vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _pipelinePathtracer);
 
@@ -913,7 +929,10 @@ void Engine::cleanup() {
 	if (_loaded) {
 		vkDeviceWaitIdle(_device);
 
+		if (_sceneDataBuffer.loaded) _allocator.destroyBuffer(_sceneDataBuffer);
 		if (_scene.loaded) loader::destroyScene(_device, _allocator, _scene, _dispatchTable);
+
+		if (_envAliasTable.loaded) _allocator.destroyBuffer(_envAliasTable);
 
 		destroySwapChain();
 		if (_hdrLoaded) _allocator.destroyImage(_hdrImage);
