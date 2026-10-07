@@ -5,7 +5,7 @@ T Fong `SomeInternet`
 
 A pathtracer graphics engine written in C++, Vulkan RT, and Slang. Inspired by my previous pathtracer graphics engine project, [Tsuki Engine](https://github.com/SomeInternet/Tsuki-Engine), that implemented software pathtracing with Vulkan-CUDA interop.
 ![](img/main_render.png)
-*A render of the [Amazon Lumberyard Bistro](https://developer.nvidia.com/orca/amazon-lumberyard-bistro) scene, part of which I took into Blender and re-exported as a glb scene.*
+*A render of the [Amazon Lumberyard Bistro](https://developer.nvidia.com/orca/amazon-lumberyard-bistro) scene, part of which I took into Blender and re-exported as a glb scene. You can access the glb version [here](https://drive.google.com/file/d/1IUR4zbtgZiPxAZCEbUySQ_30De5AmyWE/view?usp=sharing).*
 
 ### Table of Contents
 - [A Crash Course in Pathtracing](#a-crash-course-in-pathtracing)
@@ -117,7 +117,6 @@ To sample from the image, we wrap the image to a sphere. The u coordinate we sam
 *Benchmarks were taken on my Windows 11 laptop, with an RTX 5070 Mobile, 32GB RAM(5600MT/s), and an Intel Ultra 9 275HX (2.6GHz).*
 
 The performance of the pathtracer is view-dependent, as it affects what parts of the acceleration structure the rays have to traverse. To lead with the big, impressive first stat, at 1920*1080p, averaging over 1000 frames (after the first 10 seconds) with the bistro scene at 2,829,226 triangles, I get an average of 20.321 ms/frame (49.2 frames per second), with a minimum of 19.6 ms/frame, median of 20.423 ms/frame, and maximum of 21.104 ms/frame.
-
 
 ### Setup Instructions
 Clone the project, and open it in CMake GUI.
