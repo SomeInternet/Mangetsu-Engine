@@ -79,6 +79,7 @@ where $\theta_1, \theta_2$ are the angles of the incoming and outgoing ray segme
 
 Here's a render showcasing the effects of differing IoRs, where the spheres have, from left to right, IoRs of `1.001f, 1.25f, 1.5f, 1.75f, 2.f`.
 ![](img/ior.png)
+*You can inspect this scene as `ior.glb`.*
 
 #### Thin Lens Camera (Depth of Field)
 When you typically implement your first camera, you get a pinhole camera, in that the light lands on the "film" as if it were passing through an infinitely small pinhole. Everything is in perfect focus because all light landing at some point on the film must come from precisely one direction to make it through the pinhole. That jitter for anti-aliasing represents the fact that the pixel contains a small breadth of space, so light from slightly different directions can land within a single pixel.
@@ -98,6 +99,8 @@ Here's a cool gif that demonstrates the limitations of normal maps:
 
 Having implemented normal mapping, here's a demonstration of them in action:
 ![](img/normal_map.png)
+*You can inspect this scene as `cornellbox_normals.glb`.*
+
 It still captures a lot of the details that makes the ground look believably textured, such as capturing the green bounce light from the wall.
 
 #### Image-Based Lighting
