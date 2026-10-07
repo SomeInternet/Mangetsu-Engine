@@ -116,6 +116,8 @@ To sample from the image, we wrap the image to a sphere. The u coordinate we sam
 ### Benchmarks
 *Benchmarks were taken on my Windows 11 laptop, with an RTX 5070 Mobile, 32GB RAM(5600MT/s), and an Intel Ultra 9 275HX (2.6GHz).*
 
+The performance of the pathtracer is view-dependent, as it affects what parts of the acceleration structure the rays have to traverse. To lead with the big, impressive first stat, at 1920*1080p, averaging over 1000 frames (after the first 10 seconds) with the bistro scene at 2,829,226 triangles, I get an average of 20.321 ms/frame (49.2 frames per second), with a minimum of 19.6 ms/frame, median of 20.423 ms/frame, and maximum of 21.104 ms/frame.
+
 
 ### Setup Instructions
 Clone the project, and open it in CMake GUI.
