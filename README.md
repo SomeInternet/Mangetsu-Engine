@@ -37,8 +37,6 @@ We take these samples by tracing the paths light takes (hence the name). Doing t
 
 We terminate our path after either hitting a light source, hitting nothing, or after hitting a maximum depth, which is tunable.
 
-Observe the effects of changing the maximum depth:
-
 ### Current Features
 *As of October 6, 2026*
 
@@ -68,6 +66,10 @@ Metals reflect according to the material's albedo, where plastic is imagined as 
 With a transmissive surface, the underlayer could be transmissive. We can therefore imagine glass as having `metallic = 0.f`, `transmissiveness = 1.f`.
 
 I sample this by picking a random value between 0 and 1, then combining that with the material parameters to choose a lobe to sample from. Given I weight the samples in accordance to the rate at which I sample them, you can imagine that by averaging this over a large number of samplers, I converge to the correct result without bias.
+
+Here's a render showcasing the Cook-Torrance BSDF in action. You can get more diffuse-looking walls, a relatively smooth mirrorlike metallic wall, a rough metallic ball, a glossy plastic ball, and a refractive somewhat rough glass sphere all in one:
+![](img/cook_torrance_bsdf.png)
+*A render of the `cornellbox_transmission.glb` scene.*
 
 #### Dielectric Refraction
 As mentioned earlier, I support varying indices of refraction through the glTF extension `KHR_materials_ior` (though my implementation currently breaks at an IoR of exactly 1). By Snell's Law, the index of refraction influences how the transmitted ray's direction is impacted by the normal:
@@ -120,6 +122,14 @@ To sample from the image, we wrap the image to a sphere. The u coordinate we sam
 *Benchmarks were taken on my Windows 11 laptop, with an RTX 5070 Mobile, 32GB RAM(5600MT/s), and an Intel Ultra 9 275HX (2.6GHz).*
 
 The performance of the pathtracer is view-dependent, as it affects what parts of the acceleration structure the rays have to traverse. To lead with the big, impressive first stat, at 1920*1080p, averaging over 1000 frames (after the first 10 seconds) with the bistro scene at 2,829,226 triangles, I get an average of 20.321 ms/frame (49.2 frames per second), with a minimum of 19.6 ms/frame, median of 20.423 ms/frame, and maximum of 21.104 ms/frame.
+
+I wish I could show the direct performance difference for what would normally be big performance optimizations like acceleration structures, but unfortunately (or fortunately, I guess) the hardware raytracing API builds the acceleration structure.
+
+Digging a little deeper with NSight Graphics though, profiling a run in my `cornellbox_transmission.glb` scene, most of the time seems to be spent on the ray tracing traversal.
+
+![](img/nsight_flame_graph.png)
+
+Active threads per warp is pretty high, at 27.5, but unallocated warps in active SMs is also high, at an average of 24.6 warps (51.2% occupancy). I believe that high register usage per thread could be a cause of this.
 
 ### Setup Instructions
 Clone the project, and open it in CMake GUI.
