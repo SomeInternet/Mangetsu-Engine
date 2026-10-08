@@ -168,6 +168,14 @@ void closestHit(inout HitPayload payload, in BuiltInTriangleIntersectionAttribut
         .SampleLevel( samplers[NonUniformResourceIndex(pc.sceneData->textures[material.colorTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f) : 
         float4(1.f));
 
+        if (albedo.a < .2f) {
+            payload.throughput = float4(float3(1.f), 0.f);
+            payload.rayDir = WorldRayDirection();
+            payload.rayOrigin = WorldRayOrigin() + (RayTCurrent() + EPSILON) * WorldRayDirection();
+            payload.seed = seed;
+            return;
+        }
+
         float3 bsdf;
         float pdf;
         {

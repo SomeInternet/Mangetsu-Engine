@@ -1,7 +1,6 @@
 # Build output
 build/
 out/
-models/
 
 # Visual Studio
 .vs/
