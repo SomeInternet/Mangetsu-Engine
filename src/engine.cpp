@@ -472,7 +472,6 @@ void Engine::loadScene(const std::string &file) {
 	if (_sceneDataBuffer.loaded) _allocator.destroyBuffer(_sceneDataBuffer);
 	_sceneData.deviceSubMeshes = _scene.subMeshBuffer.address;
 	_sceneData.materials = _scene.materialBuffer.address;
-	_sceneData.textures = _scene.textureBuffer.address;
 	_sceneData.lightAliasTable = _scene.lightStrengthAliasTable.address;
 	_sceneData.lightTriangles = _scene.lightTriangles.address;
 	_sceneData.totalLightWeight = _scene.totalLightWeight;

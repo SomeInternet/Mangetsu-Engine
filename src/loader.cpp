@@ -117,6 +117,19 @@ Scene loader::loadScene(VkDevice &device, Allocator &allocator, const std::strin
 
 	Scene newScene{};
 
+    //Load the textures
+    std::unordered_map<int, int> texToImg;
+    std::unordered_map<int, int> texToSampler;
+
+    //Default entries (See bloopers if I remember to include the blooper where everything becomes Testament
+    texToImg[-1] = -1;
+    texToSampler[-1] = -1;
+    for (int i = 0; i < model.textures.size(); ++i) {
+        const auto &texture = model.textures[i];
+        texToImg[i] = texture.source;
+        texToSampler[i] = texture.sampler;
+    }
+
     std::unordered_set<int> srgbTextures;
     std::unordered_map<int, float> emissiveMaterials;
     //Load materials
@@ -170,12 +183,18 @@ Scene loader::loadScene(VkDevice &device, Allocator &allocator, const std::strin
 
         //TODO: Extract subsurface scattering and anisotropy data?
 
-        //Store the texture indices
-        newMaterial.colorTexIdx = pbr.baseColorTexture.index;
-        newMaterial.norTexIdx = material.normalTexture.index;
+        //Resolve the texture indices to image and sampler indices here and now
+        newMaterial.colorImgIdx = texToImg[pbr.baseColorTexture.index];
+        newMaterial.colorSamplerIdx = texToSampler[pbr.baseColorTexture.index];
 
-        newMaterial.metallicRoughnessTexIdx = pbr.metallicRoughnessTexture.index;
-        newMaterial.emissionTexIdx = material.emissiveTexture.index;
+        newMaterial.norImgIdx = texToImg[material.normalTexture.index];
+        newMaterial.norSamplerIdx = texToSampler[material.normalTexture.index];
+
+        newMaterial.metallicRoughnessImgIdx = texToImg[pbr.metallicRoughnessTexture.index];
+        newMaterial.metallicRoughnessSamplerIdx = texToSampler[pbr.metallicRoughnessTexture.index];
+
+        newMaterial.emissionImgIdx = texToImg[material.emissiveTexture.index];
+        newMaterial.emissionSamplerIdx = texToSampler[material.emissiveTexture.index];
 
         if (pbr.baseColorTexture.index >= 0) srgbTextures.insert(model.textures[pbr.baseColorTexture.index].source);
         if (material.emissiveTexture.index >= 0) srgbTextures.insert(model.textures[material.emissiveTexture.index].source);
@@ -414,14 +433,6 @@ Scene loader::loadScene(VkDevice &device, Allocator &allocator, const std::strin
             newScene.imageViewCreateInfos.push_back(info);
         }
     }
-    
-    //Load the textures
-    newScene.textures.reserve(model.textures.size());
-    for (const auto &texture : model.textures) {
-        newScene.textures.push_back({texture.source, texture.sampler});
-    }
-    newScene.textureBuffer = allocator.uploadBuffer(newScene.textures.data(), newScene.textures.size() * sizeof(Texture), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-        VMA_MEMORY_USAGE_GPU_ONLY);
 
     //Build the acceleration structures
     std::vector<std::vector<VkAccelerationStructureGeometryKHR>> blasGeometries;
@@ -661,7 +672,6 @@ void loader::destroyScene(VkDevice &device, Allocator &allocator, Scene &scene, 
     scene.meshes.clear();
 
     allocator.destroyBuffer(scene.materialBuffer);
-    allocator.destroyBuffer(scene.textureBuffer);
 
     //Destroy images
     for (auto &image : scene.images) allocator.destroyImage(image);

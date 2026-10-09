@@ -25,23 +25,24 @@ struct DeviceSubMesh {
     int padding;
 };
 
-struct Texture {
-    int imageIdx;
-    int samplerIdx;
-};
-
 struct Material {
     float4 color;
     float4 emission; // Also store emissive strength in here?
-    float metallic;
-    float roughness;
+    float2 metallicRoughness;
     float transmissiveness;
     float ior;
 
-    int colorTexIdx;
-    int metallicRoughnessTexIdx;
-    int norTexIdx;
-    int emissionTexIdx;
+    int colorImgIdx;
+    int colorSamplerIdx;
+
+    int metallicRoughnessImgIdx;
+    int metallicRoughnessSamplerIdx;
+
+    int norImgIdx;
+    int norSamplerIdx;
+
+    int emissionImgIdx;
+    int emissionSamplerIdx;
 };
 
 struct AliasTableEntry {
@@ -58,7 +59,6 @@ struct LightTriangle {
 struct SceneData {
     DeviceSubMesh *deviceSubMeshes;
     Material *materials;
-    Texture *textures;
 
     LightTriangle *lightTriangles;
     AliasTableEntry *lightAliasTable;
@@ -96,12 +96,11 @@ struct MaterialParams {
 };
 
 struct HitPayload {
-    float4 throughput = {};
+    float3 throughput = {};
 
     //TODO: Add weight for RR?
     float3 rayOrigin = {};
     float3 rayDir = {};
-    int depth = 0;
 
     uint2 seed = 0;
 };
@@ -110,6 +109,10 @@ struct PointInfo {
     float3 nor = {};
     float3 tan = {};
     float2 uv = {};
+};
+
+enum BSDFLobe {
+    METALLIC, SPECULAR_REFL, DIFFUSE_REFL, SPECULAR_TRANS
 };
 
 //Helper functions

@@ -254,7 +254,7 @@ inline float3 evalBsdfCookTorrance(float3 wo, float3 wi, MaterialParams matParam
            : matParams.albedo * d(whT, alpha2) * g(wo, wi, alpha2) * abs(dot(wo, whT) * dot(wi, whT) / (denom)));
 }
 
-inline float evalCookTorrance(float3 wo, float3 wi, MaterialParams matParams) {
+inline float evalPdfCookTorrance(float3 wo, float3 wi, MaterialParams matParams) {
     float3 f = fDielectric(wo, float3(0, 0, 1), matParams.etaA, matParams.etaB);
     float pMetal = matParams.metallic;
     float pSpecularReflection = (1.f - pMetal) * f.x;
@@ -274,6 +274,10 @@ inline float evalCookTorrance(float3 wo, float3 wi, MaterialParams matParams) {
            pDiffuseReflection * max(wi.z, 0.f) / PI +
            pSpecularTrans * ((dot(whT, wi) >= 0.f || dot(whT, wo) < 0.f || matParams.etaA == matParams.etaB) ? 0.f : 
            pdfTorranceSparrow(wo, whT, matParams.roughness) * 4.f * abs(dot(wo, whT)) * abs(dot(wi, whT)) / (s * s));
+}
+
+inline float3 evalCookTorrance() {
+
 }
 
 inline float powerHeuristic(int nf, float fPdf, int ng, float gPdf) {

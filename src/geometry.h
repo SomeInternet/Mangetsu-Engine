@@ -21,10 +21,17 @@ struct Material {
 	float transmissiveness{ 0.f };
 	float ior{ 1.5f };
 
-	int colorTexIdx{ -1 };
-	int metallicRoughnessTexIdx{ -1 };
-	int norTexIdx{ -1 };
-	int emissionTexIdx{ -1 };
+	int colorImgIdx{ -1 };
+	int colorSamplerIdx{ -1 };
+
+	int metallicRoughnessImgIdx{ -1 };
+	int metallicRoughnessSamplerIdx{ -1 };
+
+	int norImgIdx{ -1 };
+	int norSamplerIdx{ -1 };
+
+	int emissionImgIdx{ -1 };
+	int emissionSamplerIdx{ -1 };
 };
 
 struct SubMesh {
@@ -61,11 +68,6 @@ struct Mesh {
 	AccelerationStructure blas{};
 };
 
-struct Texture {
-	int imageIdx{ -1 };
-	int samplerIdx{ -1 };
-};
-
 struct Instance {
 	glm::mat4 transform;
 	uint32_t mesh;
@@ -86,9 +88,6 @@ struct Scene {
 	std::vector<AllocatedImage> images;
 
 	AllocatedBuffer instanceBuffer;
-
-	std::vector<Texture> textures;
-	AllocatedBuffer textureBuffer;
 
 	AccelerationStructure tlas{};
 

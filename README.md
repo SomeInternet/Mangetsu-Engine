@@ -24,16 +24,16 @@ A pathtracer graphics engine written in C++, Vulkan RT, and Slang. Inspired by m
 
 ### A Crash Course in Pathtracing
 A quick motivation on pathtracing! It's an incredibly cool topic that merges art and low-level computer science. It also touches on a lot of math and physics that I'm not too well versed in, but find fascinating at a higher level.  
-It might be a strange way to view the world, but if for every point in the world you could see, you knew exactly how much light was reaching it from all angles, and what proportion of that light was sent towards you, you'd be able to perfectly recreate the lighting of the scene. You can imagine this as integrating over there hemisphere (or sphere) the following equation, referred to as the **rendering equation** or **light transport equation**:
+It might be a strange way to view the world, but if for every point in the world you could see, you knew exactly how much light was reaching it from all angles, and what proportion of that light was sent towards you, you'd be able to perfectly recreate the lighting of the scene. You can imagine this as integrating over the hemisphere (or sphere) the following equation, referred to as the **rendering equation** or **light transport equation**:
 
 ![](img/light_transport.png)
 *Credit: https://pbr-book.org/3ed-2018/Light_Transport_I_Surface_Reflection/The_Light_Transport_Equation*
 
-It looks mean, but the principle is quite simple: the light sent from a point $p$ in a direction $\omega$n ($L_o(p, \omega_o)$) is the light emitted from that point in that direction $L_e(p, \omega)$ plus, for all directions $\omega_i$, the light received at point $p$ from $\omega_i$, attenuated by the amount of light sent from $\omega_i$ to $\omega_o$ by point $p$. $|cos\theta_i|$, Lambert's Law, expresses the way light is spread over a larger area when it hits at a glancing angle, resulting in less illumination.
+It looks mean, but the principle is quite simple: the light sent from a point $p$ in a direction $\omega_o$ ($L_o(p, \omega_o)$) is the light emitted from that point in that direction $L_e(p, \omega_o)$ plus, for all directions $\omega_i$, the light received at point $p$ from $\omega_i$, attenuated by the amount of light sent from $\omega_i$ to $\omega_o$ by point $p$. $|cos\theta_i|$, Lambert's Law, expresses the way light is spread over a larger area when it hits at a glancing angle, resulting in less illumination.
 
-Unfortunately, this equation mostly isn't able to be analytically computed, so we approximate it using Monte Carlo estimation (hence Monte Carlo pathtracer). The idea is that if we take a bunch of samples, weighting the samples by the relative likelihood they were taken, then as we take more samples, we converge to the true integral. This is why the renderer image starts off noisy and begins to smooth out and look realistic.
+Unfortunately, this equation mostly isn't able to be analytically computed, so we approximate it using Monte Carlo estimation (hence Monte Carlo pathtracer). The idea is that if we take a bunch of samples, weighting the samples by the relative likelihood they were taken, then as we take more samples, we converge to the true integral. This is why the rendered image starts off noisy and begins to smooth out and look realistic.
 
-We take these samples by tracing the paths light takes (hence the name). Doing this from light source to camera would be wasteful, as the camera is infinitely small, so we do it from reverse, from camera to light source. The way we scatter the rays off of surfaces is determined by the material properties of the surface, and we attenuate any light we receive at the terminus of the path by the proportion of red, green, and blue light the material would scatter from our inbound direction ($\omega_i$) to our outbound direction ($\omega_o$).
+We take these samples by tracing the paths light takes (hence the name). Doing this from light source to camera would be wasteful, as the camera is infinitely small, so we do it in reverse, from camera to light source. The way we scatter the rays off of surfaces is determined by the material properties of the surface, and we attenuate any light we receive at the terminus of the path by the proportion of red, green, and blue light the material would scatter from our inbound direction ($\omega_i$) to our outbound direction ($\omega_o$).
 
 We terminate our path after either hitting a light source, hitting nothing, or after hitting a maximum depth, which is tunable.
 
@@ -59,13 +59,13 @@ I support the `KHR_materials_emissive_strength`, `KHR_materials_ior`, and `KHR_m
 ![](img/bsdf_diagram.png)
 *Credit: https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_materials_transmission/README.md*
 
-We break it down into several lobes. We have a metallic lobe following the Torrance-Sparrow microfacet model, which imagines the macrosurface being comprised of a bunch of perfectly mirror-like microscopic surfaces, which their own micronormals. The distribution of micronormals about the macronormal (i.e. how much they vary) depends upon the roughness of the material, where 0 is very mirror-like and 1 looks more diffuse.
+We break it down into several lobes. We have a metallic lobe following the Torrance-Sparrow microfacet model, which imagines the macrosurface being comprised of a bunch of perfectly mirror-like microscopic surfaces, with their own micronormals. The distribution of micronormals about the macronormal (i.e. how much they vary) depends upon the roughness of the material, where 0 is very mirror-like and 1 looks more diffuse.
 
 Metals reflect according to the material's albedo, where plastic is imagined as having a gray-ish sheen atop a diffuse underlayer, where we get more reflection as our view angle becomes more grazing.
 
 With a transmissive surface, the underlayer could be transmissive. We can therefore imagine glass as having `metallic = 0.f`, `transmissiveness = 1.f`.
 
-I sample this by picking a random value between 0 and 1, then combining that with the material parameters to choose a lobe to sample from. Given I weight the samples in accordance to the rate at which I sample them, you can imagine that by averaging this over a large number of samplers, I converge to the correct result without bias.
+I sample this by picking a random value between 0 and 1, then combining that with the material parameters to choose a lobe to sample from. Given I weight the samples in accordance to the rate at which I sample them, you can imagine that by averaging this over a large number of samples, I converge to the correct result without bias.
 
 Here's a render showcasing the Cook-Torrance BSDF in action. You can get more diffuse-looking walls, a relatively smooth mirrorlike metallic wall, a rough metallic ball, a glossy plastic ball, and a refractive somewhat rough glass sphere all in one:
 ![](img/cook_torrance_bsdf.png)
@@ -103,10 +103,10 @@ Having implemented normal mapping, here's a demonstration of them in action:
 ![](img/normal_map.png)
 *You can inspect this scene as `cornellbox_normals.glb`.*
 
-It still captures a lot of the details that makes the ground look believably textured, such as capturing the green bounce light from the wall.
+It still captures a lot of the details that make the ground look believably textured, such as capturing the green bounce light from the wall.
 
 #### Image-Based Lighting
-Ordinarily, a ray that doesn't intersect a scene would return a flat emissive color. To achieve more visually interesting results like a sky, and quickly, we could an image called an environment map and sample from it instead. We use HDR images because they represent radiance values beyond the $[0, 1]$ range of ordinary colors, making them ideal for environments that cast light.
+Ordinarily, a ray that doesn't intersect a scene would return a flat emissive color. To achieve more visually interesting results like a sky, and quickly, we could use an image called an environment map and sample from it instead. We use HDR images because they represent radiance values beyond the $[0, 1]$ range of ordinary colors, making them ideal for environments that cast light.
 
 To sample from the image, we wrap the image to a sphere. The u coordinate we sample is influenced by the xz direction of our ray, and the v coordinate we sample is influenced by the y direction of our ray.
 

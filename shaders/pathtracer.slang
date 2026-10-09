@@ -61,7 +61,7 @@ void rayGeneration() {
     float3 throughput = float3(1.f);
     float3 finalColor = float3(0.f);
     HitPayload payload = {};
-    while (payload.depth < pc.maxBounces) {
+    for (uint i = 0; i < pc.maxBounces; ++i) {
         payload.seed = seed;
 
         //For SER
@@ -70,7 +70,8 @@ void rayGeneration() {
         HitObject::Invoke<HitPayload>(tlas, hitObject, payload);       
         
         if (hitObject.IsHit()) {
-            if (payload.throughput.a > 0.f) {
+            if (payload.throughput.b < 0.f) {
+                payload.throughput.b *= -1.f;
                 finalColor += throughput * payload.throughput.rgb;
                 break;
             }
@@ -78,9 +79,9 @@ void rayGeneration() {
             throughput *= select(isnan(payload.throughput.rgb), float3(0.f), payload.throughput.rgb);
             ray.Origin = payload.rayOrigin;
             ray.Direction = payload.rayDir;
-            ++payload.depth;
         } else {
             finalColor += throughput * payload.throughput.rgb;
+            finalColor.b *= -1.f;
             break;
         }
 
@@ -113,55 +114,52 @@ void closestHit(inout HitPayload payload, in BuiltInTriangleIntersectionAttribut
     }
 
     // TODO: Consider an alternative to my current solution to a material index being 0
+    // TODO: Drop the image and sampler indices once I'm done with them?
     Material material = pc.sceneData->materials[max(pc.sceneData->deviceSubMeshes[InstanceID() + GeometryIndex()].materialIdx, 0)];
 
     // Emissive
     //We terminate early on emissive materials
     if (length(material.emission.rgb) > 0.f) {
-        float3 emissionColor = material.emission.rgb * (material.emissionTexIdx != -1 ? 
-            sceneImages[NonUniformResourceIndex(pc.sceneData->textures[material.emissionTexIdx].imageIdx)]
-            .SampleLevel(samplers[NonUniformResourceIndex( pc.sceneData->textures[material.emissionTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f) .rgb : 
+        float3 emissionColor = material.emission.rgb * (material.emissionImgIdx != -1 ? 
+            sceneImages[NonUniformResourceIndex(material.emissionImgIdx)]
+            .SampleLevel(samplers[NonUniformResourceIndex( material.emissionSamplerIdx + 1)], pointInfo.uv, 0.f) .rgb : 
             float3(1.f));
 
-        payload.throughput = float4(emissionColor * material.emission[3], 1.f);
+        payload.throughput = emissionColor * material.emission[3], 1.f;
+        payload.throughput.b = min(-payload.throughput.b, -EPSILON);
         return;
     }
 
     //APPLY MATERIAL MAPS
     // Normal map
-    if (material.norTexIdx >= 0) {
-        Texture tex = pc.sceneData->textures[material.norTexIdx];
-        float3 mNor = sceneImages[NonUniformResourceIndex(tex.imageIdx)]
-                          .SampleLevel(samplers[NonUniformResourceIndex(tex.samplerIdx + 1)], pointInfo.uv, 0.f) .rgb;
+    if (material.norImgIdx >= 0) {
+        float3 mNor = sceneImages[NonUniformResourceIndex(material.norImgIdx)]
+                          .SampleLevel(samplers[NonUniformResourceIndex(material.norSamplerIdx + 1)], pointInfo.uv, 0.f) .rgb;
 
         applyNormalMap(pointInfo, mNor);
     }
     float3 wo = -normalize(mulNor(pointInfo, mul(WorldToObject3x4(), float4(WorldRayDirection(), 0.f)).xyz));
 
-    //Roughness
-    material.roughness *= (material.metallicRoughnessTexIdx != -1 ? 
-        sceneImages[NonUniformResourceIndex(pc.sceneData->textures[material.metallicRoughnessTexIdx].imageIdx)]
-        .SampleLevel(samplers[NonUniformResourceIndex( pc.sceneData->textures[material.metallicRoughnessTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f)[1] : 
-        1.f);
-        material.roughness = max(material.roughness, .00001f);
-
-    //Metallic
-    material.metallic = material.metallic * (material.metallicRoughnessTexIdx != -1 ? 
-        sceneImages[NonUniformResourceIndex( pc.sceneData->textures[material.metallicRoughnessTexIdx].imageIdx)]
-        .SampleLevel(samplers[NonUniformResourceIndex( pc.sceneData->textures[material.metallicRoughnessTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f)[2] : 
-        1.f);
+    // Metallic-Roughness
+    material.metallicRoughness = material.metallicRoughness * (material.metallicRoughnessImgIdx != -1 ? 
+        sceneImages[NonUniformResourceIndex(material.metallicRoughnessImgIdx)]
+        .SampleLevel( samplers[NonUniformResourceIndex(material.metallicRoughnessSamplerIdx + 1)], pointInfo.uv, 0.f).bg : 
+        float2(1.f));
+    
+    // Using .y instead of .g because the Slang syntax highlighting extension behaves really funky... :(
+    material.metallicRoughness.y = max(material.metallicRoughness.y, EPSILON);
 
     // Albedo
-    material.color *= (material.colorTexIdx != -1 ? 
-        sceneImages[NonUniformResourceIndex(pc.sceneData->textures[material.colorTexIdx].imageIdx)]
-        .SampleLevel( samplers[NonUniformResourceIndex(pc.sceneData->textures[material.colorTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f) : 
+    material.color *= (material.colorImgIdx != -1 ? 
+        sceneImages[NonUniformResourceIndex(material.colorImgIdx)]
+        .SampleLevel( samplers[NonUniformResourceIndex(material.colorSamplerIdx + 1)], pointInfo.uv, 0.f) : 
         float4(1.f));
 
     float3 wi;
     {
         // TODO: Handle alpha better
         if (material.color.a < .2f) {
-            payload.throughput = float4(float3(1.f), 0.f);
+            payload.throughput = float3(1.f);
             payload.rayDir = WorldRayDirection();
             payload.rayOrigin = WorldRayOrigin() + (RayTCurrent() + EPSILON) * WorldRayDirection();
             payload.seed = seed;
@@ -170,6 +168,7 @@ void closestHit(inout HitPayload payload, in BuiltInTriangleIntersectionAttribut
 
         float3 bsdf;
         float pdf;
+        //TODO: Optimize
         {
             float2 xi = float2(rand(), rand());
             float rand = rand();
@@ -177,9 +176,11 @@ void closestHit(inout HitPayload payload, in BuiltInTriangleIntersectionAttribut
             float3 f;
             float etaA = entering ? 1.f : material.ior;
             float etaB = entering ? material.ior : 1.f;
-            wi = sampleWiCookTorrance(material.metallic, material.roughness, material.transmissiveness, rand, wo, wh, etaA, etaB, f, xi);
-            payload.throughput = float4(bsdfCookTorrance(wo, wh, wi, material.color.rgb, material.metallic, material.roughness, f, material.transmissiveness, etaA, etaB, rand), 0.f);
-            payload.throughput /= pdfCookTorrance(wo, wh, wi, material.color.rgb, material.metallic, material.roughness, f, material.transmissiveness, etaA, etaB, rand);
+            wi = sampleWiCookTorrance(material.metallicRoughness.x, material.metallicRoughness.y, material.transmissiveness, rand, wo, wh, etaA, etaB, f, xi);
+            payload.throughput = bsdfCookTorrance(wo, wh, wi, material.color.rgb, material.metallicRoughness.x, material.metallicRoughness.y, 
+                f, material.transmissiveness, etaA, etaB, rand);
+            payload.throughput /= pdfCookTorrance(wo, wh, wi, material.color.rgb, material.metallicRoughness.x, material.metallicRoughness.y, 
+                f, material.transmissiveness, etaA, etaB, rand);
         }
     }
 
@@ -193,8 +194,8 @@ void miss(inout HitPayload payload) {
     float2 uv = float2(atan2(WorldRayDirection().z, WorldRayDirection().x), asin(WorldRayDirection().y));
     uv *= float2(1.f / (2.f * PI), -1.f / PI); //v is flipped
     uv += float2(.5f);
-    payload.throughput = float4(hdrImage.SampleLevel(samplers[0], uv, 0.f).rgb, 1.f);
-    payload.depth = MAX_BOUNCES;
+    payload.throughput = hdrImage.SampleLevel(samplers[0], uv, 0.f).rgb;
+    payload.throughput.b = min(-payload.throughput.b, -EPSILON);
 }
 
 [shader("anyhit")]
