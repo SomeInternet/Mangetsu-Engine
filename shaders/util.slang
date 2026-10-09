@@ -101,16 +101,14 @@ struct HitPayload {
     //TODO: Add weight for RR?
     float3 rayOrigin = {};
     float3 rayDir = {};
-
-    float ior = 1.f; //ior of the previous material
     int depth = 0;
 
     uint2 seed = 0;
 };
 
 struct PointInfo {
-    float3x3 tbn = {};
     float3 nor = {};
+    float3 tan = {};
     float2 uv = {};
 };
 
@@ -151,14 +149,13 @@ inline float3 sampleLightTriangle(LightTriangle lightTriangle, float2 xi, out fl
     return u * lightTriangle.p0 + v * lightTriangle.p1 + (1.f - u - v) * lightTriangle.p2;
 }
 
-inline PointInfo getPointInfo(uint subMeshIdx, uint primitiveIdx, float3 barycentrics, PushConstantsPathtracer pc) {
-    float3 nor;
+inline PointInfo getPointInfo(uint subMeshIdx, uint primitiveIdx, float3 barycentrics, PushConstantsPathtracer pc, out float3 gNor) {
     {
         float3 *posBuffer = pc.sceneData->deviceSubMeshes[subMeshIdx].posBuffer;
         float3 p0 = posBuffer[pc.sceneData->deviceSubMeshes[subMeshIdx].indexBuffer[primitiveIdx * 3]];
         float3 p1 = posBuffer[pc.sceneData->deviceSubMeshes[subMeshIdx].indexBuffer[primitiveIdx * 3 + 1]];
         float3 p2 = posBuffer[pc.sceneData->deviceSubMeshes[subMeshIdx].indexBuffer[primitiveIdx * 3 + 2]];
-        nor = normalize(cross(p1 - p0, p2 - p0));
+        gNor = normalize(cross(p1 - p0, p2 - p0));
     }
 
     Vertex *vertices = pc.sceneData->deviceSubMeshes[subMeshIdx].vertexBuffer;
@@ -181,9 +178,7 @@ inline PointInfo getPointInfo(uint subMeshIdx, uint primitiveIdx, float3 barycen
         tangent = abs(res.nor.x) > abs(res.nor.y) ? float3(-res.nor.z, 0.f, res.nor.x) / sqrt(res.nor.x * res.nor.x + res.nor.z * res.nor.z) :
             float3(0.f, res.nor.z, -res.nor.y) / sqrt(res.nor.y * res.nor.y + res.nor.z * res.nor.z);
     }
-    tangent = normalize(tangent - res.nor * dot(res.nor, tangent));
-    res.tbn = float3x3(tangent, cross(res.nor, tangent), res.nor); // TODO: might have to change this for left-handed spaces
-    res.nor = nor;
+    res.tan = normalize(tangent - res.nor * dot(res.nor, tangent)); // TODO: might have to change this for left-handed spaces
     return res;
 }
 
@@ -215,12 +210,17 @@ inline float3 toHemisphereUniform(float2 xi) {
     return float3(cos(2.f * PI * xi.y) * sqrt(1.f - xi.x * xi.x), sin(2.f * PI * xi.y) * sqrt(1.f - xi.x * xi.x), xi.x);
 }
 
-inline float3x3 applyNormalMap(float3x3 tbn, float3 mNor) {
+inline void applyNormalMap(inout PointInfo pointInfo, float3 mNor) {
     mNor = normalize(mNor * 2.f - 1.f);
 
-    float3 nNor = normalize(mul(mNor, tbn));
-    float3 nTan = normalize(tbn[0] - nNor * dot(tbn[0], nNor));
-    float3 nBit = cross(nTan, nNor);
+    pointInfo.nor = normalize(mNor.x * pointInfo.tan + mNor.y * cross(pointInfo.nor, pointInfo.tan) + mNor.z * pointInfo.nor);
+    pointInfo.tan = normalize(pointInfo.tan - pointInfo.nor * dot(pointInfo.tan, pointInfo.nor));
+}
 
-    return float3x3(nTan, nBit, nNor);
+inline float3 mulNor(PointInfo pointInfo, float3 v) {
+    return float3(dot(v, pointInfo.tan), dot(v, cross(pointInfo.nor, pointInfo.tan)), dot(v, pointInfo.nor));
+}
+
+inline float3 mulNorTranspose(PointInfo pointInfo, float3 v) {
+    return v.x * pointInfo.tan + v.y * cross(pointInfo.nor, pointInfo.tan) + v.z * pointInfo.nor;
 }

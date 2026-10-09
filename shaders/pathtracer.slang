@@ -84,91 +84,83 @@ void rayGeneration() {
             break;
         }
 
-        //MIS
+        //TODO: MIS
 
         seed = payload.seed;
     }
 
     radianceImage[DispatchRaysIndex().xy] = radianceImage[DispatchRaysIndex().xy] * float(pc.frameNum) / float(pc.frameNum + 1) + 
     float4(finalColor, 1.f) * 1.f / float(pc.frameNum + 1);
-
 }
 
 [shader("closesthit")]
 void closestHit(inout HitPayload payload, in BuiltInTriangleIntersectionAttributes isect) {
     seed = payload.seed;
 
-    uint subMeshIdx = InstanceID() + GeometryIndex(); //See loader.cpp, line 500
-    uint triIdx = PrimitiveIndex();
-    float t = RayTCurrent();
+    PointInfo pointInfo;
+    bool entering;
+    {
+        float3 gNor;
+        float3 barycentrics = float3(1.f - isect.barycentrics.x - isect.barycentrics.y, isect.barycentrics);
+        pointInfo = getPointInfo(InstanceID() + GeometryIndex(), PrimitiveIndex(), barycentrics, pc, gNor);
 
-    float3 barycentrics = float3(1.f - isect.barycentrics.x - isect.barycentrics.y, isect.barycentrics);
-
-    PointInfo pointInfo = getPointInfo(subMeshIdx, triIdx, barycentrics, pc);
-
-    bool entering = dot(ObjectRayDirection(), pointInfo.nor) < 0.f;
-    if (dot(ObjectRayDirection(), pointInfo.nor) > 0.f) pointInfo.nor *= -1.f;
-    if (dot(pointInfo.nor, pointInfo.tbn[2]) < 0.f) pointInfo.tbn *= -1.f;
+        entering = dot(ObjectRayDirection(), gNor) < 0.f;
+        if (dot(ObjectRayDirection(), gNor) > 0.f) gNor *= -1.f;
+        if (dot(gNor, pointInfo.nor) < 0.f) {
+            pointInfo.nor *= -1.f;
+            pointInfo.tan *= -1.f;
+        }
+    }
 
     // TODO: Consider an alternative to my current solution to a material index being 0
-    Material material = pc.sceneData->materials[max(pc.sceneData->deviceSubMeshes[subMeshIdx].materialIdx, 0)];
+    Material material = pc.sceneData->materials[max(pc.sceneData->deviceSubMeshes[InstanceID() + GeometryIndex()].materialIdx, 0)];
 
-    //Emissive
+    // Emissive
+    //We terminate early on emissive materials
     if (length(material.emission.rgb) > 0.f) {
         float3 emissionColor = material.emission.rgb * (material.emissionTexIdx != -1 ? 
-        sceneImages[NonUniformResourceIndex(pc.sceneData->textures[material.emissionTexIdx].imageIdx)]
-                       .SampleLevel(samplers[NonUniformResourceIndex( pc.sceneData->textures[material.emissionTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f).rgb : 
-        float3(1.f));
+            sceneImages[NonUniformResourceIndex(pc.sceneData->textures[material.emissionTexIdx].imageIdx)]
+            .SampleLevel(samplers[NonUniformResourceIndex( pc.sceneData->textures[material.emissionTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f) .rgb : 
+            float3(1.f));
 
         payload.throughput = float4(emissionColor * material.emission[3], 1.f);
         return;
     }
 
+    //APPLY MATERIAL MAPS
     // Normal map
     if (material.norTexIdx >= 0) {
         Texture tex = pc.sceneData->textures[material.norTexIdx];
         float3 mNor = sceneImages[NonUniformResourceIndex(tex.imageIdx)]
-            .SampleLevel(samplers[NonUniformResourceIndex(tex.samplerIdx + 1)], pointInfo.uv, 0.f).rgb;
+                          .SampleLevel(samplers[NonUniformResourceIndex(tex.samplerIdx + 1)], pointInfo.uv, 0.f) .rgb;
 
-        pointInfo.tbn = applyNormalMap(pointInfo.tbn, mNor);
+        applyNormalMap(pointInfo, mNor);
     }
+    float3 wo = -normalize(mulNor(pointInfo, mul(WorldToObject3x4(), float4(WorldRayDirection(), 0.f)).xyz));
 
-    float3 wo = -normalize(mul(pointInfo.tbn, mul(WorldToObject3x4(), float4(WorldRayDirection(), 0.f)).xyz));
-    float roughness;
-    {
-        roughness = material.roughness * (material.metallicRoughnessTexIdx != -1 ? 
-        sceneImages[NonUniformResourceIndex( pc.sceneData->textures[material.metallicRoughnessTexIdx].imageIdx)]
-                       .SampleLevel(samplers[NonUniformResourceIndex( pc.sceneData->textures[material.metallicRoughnessTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f)[1] : 
+    //Roughness
+    material.roughness *= (material.metallicRoughnessTexIdx != -1 ? 
+        sceneImages[NonUniformResourceIndex(pc.sceneData->textures[material.metallicRoughnessTexIdx].imageIdx)]
+        .SampleLevel(samplers[NonUniformResourceIndex( pc.sceneData->textures[material.metallicRoughnessTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f)[1] : 
         1.f);
-    }
-    roughness = max(roughness, .00001f);
+        material.roughness = max(material.roughness, .00001f);
 
-    float metallic;
-    {
-        metallic = material.metallic * (material.metallicRoughnessTexIdx != -1 ? 
+    //Metallic
+    material.metallic = material.metallic * (material.metallicRoughnessTexIdx != -1 ? 
         sceneImages[NonUniformResourceIndex( pc.sceneData->textures[material.metallicRoughnessTexIdx].imageIdx)]
-                       .SampleLevel(samplers[NonUniformResourceIndex( pc.sceneData->textures[material.metallicRoughnessTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f)[2] : 
+        .SampleLevel(samplers[NonUniformResourceIndex( pc.sceneData->textures[material.metallicRoughnessTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f)[2] : 
         1.f);
-    }
 
-    float transmissiveness;
-    {
-        transmissiveness = material.transmissiveness;
-    }
-
-    float ior;
-    {
-        ior = material.ior;
-    }
-
-    float3 wi;
-    {
-        float4 albedo = material.color * (material.colorTexIdx != -1 ? 
+    // Albedo
+    material.color *= (material.colorTexIdx != -1 ? 
         sceneImages[NonUniformResourceIndex(pc.sceneData->textures[material.colorTexIdx].imageIdx)]
         .SampleLevel( samplers[NonUniformResourceIndex(pc.sceneData->textures[material.colorTexIdx].samplerIdx + 1)], pointInfo.uv, 0.f) : 
         float4(1.f));
 
-        if (albedo.a < .2f) {
+    float3 wi;
+    {
+        // TODO: Handle alpha better
+        if (material.color.a < .2f) {
             payload.throughput = float4(float3(1.f), 0.f);
             payload.rayDir = WorldRayDirection();
             payload.rayOrigin = WorldRayOrigin() + (RayTCurrent() + EPSILON) * WorldRayDirection();
@@ -179,23 +171,20 @@ void closestHit(inout HitPayload payload, in BuiltInTriangleIntersectionAttribut
         float3 bsdf;
         float pdf;
         {
-
             float2 xi = float2(rand(), rand());
             float rand = rand();
             float3 wh;
             float3 f;
-            float etaA = entering ? 1.f : ior;
-            float etaB = entering ? ior : 1.f;
-            wi = sampleWiCookTorrance(metallic, roughness, transmissiveness, rand, wo, wh, etaA, etaB, f, xi);
-            bsdf = bsdfCookTorrance(wo, wh, wi, albedo.rgb, metallic, roughness, f, transmissiveness, etaA, etaB, rand);
-            pdf = pdfCookTorrance(wo, wh, wi, albedo.rgb, metallic, roughness, f, transmissiveness, etaA, etaB, rand);
-
+            float etaA = entering ? 1.f : material.ior;
+            float etaB = entering ? material.ior : 1.f;
+            wi = sampleWiCookTorrance(material.metallic, material.roughness, material.transmissiveness, rand, wo, wh, etaA, etaB, f, xi);
+            payload.throughput = float4(bsdfCookTorrance(wo, wh, wi, material.color.rgb, material.metallic, material.roughness, f, material.transmissiveness, etaA, etaB, rand), 0.f);
+            payload.throughput /= pdfCookTorrance(wo, wh, wi, material.color.rgb, material.metallic, material.roughness, f, material.transmissiveness, etaA, etaB, rand);
         }
-        payload.throughput = float4(bsdf / pdf, 0.f);
     }
 
-    payload.rayDir = normalize(mul(ObjectToWorld3x4(), float4(mul(transpose(pointInfo.tbn), wi), 0.f)).xyz);
-    payload.rayOrigin = WorldRayOrigin() + WorldRayDirection() * RayTCurrent() + normalize(mul(ObjectToWorld3x4(), float4(mul(transpose(pointInfo.tbn), float3(0.f, 0.f, 1.f)), 0.f))) * sign(wi.z) * EPSILON;
+    payload.rayDir = normalize(mul(ObjectToWorld3x4(), float4(mulNorTranspose(pointInfo, wi), 0.f)).xyz);
+    payload.rayOrigin = WorldRayOrigin() + WorldRayDirection() * RayTCurrent() + normalize(mul(ObjectToWorld3x4(), float4(mulNorTranspose(pointInfo, float3(0.f, 0.f, 1.f)), 0.f))) * sign(wi.z) * EPSILON;
     payload.seed = seed;
 }
 

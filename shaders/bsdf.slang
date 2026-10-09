@@ -269,7 +269,7 @@ inline float evalCookTorrance(float3 wo, float3 wi, MaterialParams matParams) {
 
     float s = dot(wi, whT) + dot(wo, whT) * matParams.etaA / matParams.etaB;
 
-    return pMetal * ((wi.z < 0.f) ? 0.f : pdfTorranceSparrow(wo, wh, matParams.roughness))) +
+    return pMetal * ((wi.z < 0.f) ? 0.f : pdfTorranceSparrow(wo, wh, matParams.roughness)) +
            pSpecularReflection * ((wi.z < 0.f) ? 0.f : pdfTorranceSparrow(wo, wh, matParams.roughness)) +
            pDiffuseReflection * max(wi.z, 0.f) / PI +
            pSpecularTrans * ((dot(whT, wi) >= 0.f || dot(whT, wo) < 0.f || matParams.etaA == matParams.etaB) ? 0.f : 
