@@ -99,6 +99,7 @@ struct Scene {
 
 struct LightSubMesh {
 	std::vector<glm::vec3> pos;
+	std::vector<glm::uint32> uvs;
 	std::vector<uint32_t> indices;
 	uint32_t mat{ 0 };
 };
@@ -111,4 +112,8 @@ struct LightTriangle {
 	glm::vec3 p0;
 	glm::vec3 p1;
 	glm::vec3 p2;
+	uint32_t matIdx;
+	glm::uint32_t uv0;
+	glm::uint32_t uv1;
+	glm::uint32_t uv2;
 };

@@ -5,7 +5,6 @@
 struct SceneData {
 	VkDeviceAddress deviceSubMeshes;
 	VkDeviceAddress materials;
-	VkDeviceAddress textures;
 
 	VkDeviceAddress lightTriangles;
 	VkDeviceAddress lightAliasTable;

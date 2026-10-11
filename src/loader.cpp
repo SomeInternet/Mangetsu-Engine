@@ -376,6 +376,8 @@ Scene loader::loadScene(VkDevice &device, Allocator &allocator, const std::strin
                 LightSubMesh lightSubMesh{};
                 lightSubMesh.indices = std::move(indices);
                 lightSubMesh.pos = std::move(pos);
+                lightSubMesh.uvs.reserve(vertices.size());
+                for (const auto &v : vertices) lightSubMesh.uvs.push_back(v.uv);
                 lightSubMesh.mat = newSubMesh.materialIdx;
 
                 //Push
@@ -535,6 +537,10 @@ Scene loader::loadScene(VkDevice &device, Allocator &allocator, const std::strin
                     lt.p0 = glm::vec3(emissiveInstance.transform * glm::vec4(emissiveSubMesh.pos[emissiveSubMesh.indices[i]], 1.f));
                     lt.p1 = glm::vec3(emissiveInstance.transform * glm::vec4(emissiveSubMesh.pos[emissiveSubMesh.indices[i + 1]], 1.f));
                     lt.p2 = glm::vec3(emissiveInstance.transform * glm::vec4(emissiveSubMesh.pos[emissiveSubMesh.indices[i + 2]], 1.f));
+                    lt.matIdx = emissiveSubMesh.mat;
+                    lt.uv0 = emissiveSubMesh.uvs[emissiveSubMesh.indices[i]];
+                    lt.uv1 = emissiveSubMesh.uvs[emissiveSubMesh.indices[i + 1]];
+                    lt.uv2 = emissiveSubMesh.uvs[emissiveSubMesh.indices[i + 2]];
                     emissiveTriangles.push_back(lt);
                     emissiveWeights.push_back(glm::length(glm::cross(lt.p1 - lt.p0, lt.p2 - lt.p0)) / 2.f * emissiveMaterials[emissiveSubMesh.mat]);
                 }
@@ -549,6 +555,10 @@ Scene loader::loadScene(VkDevice &device, Allocator &allocator, const std::strin
                     lt.p0 = emissiveSubMesh.pos[emissiveSubMesh.indices[i]];
                     lt.p1 = emissiveSubMesh.pos[emissiveSubMesh.indices[i + 1]];
                     lt.p2 = emissiveSubMesh.pos[emissiveSubMesh.indices[i + 2]];
+                    lt.matIdx = emissiveSubMesh.mat;
+                    lt.uv0 = emissiveSubMesh.uvs[emissiveSubMesh.indices[i]];
+                    lt.uv1 = emissiveSubMesh.uvs[emissiveSubMesh.indices[i + 1]];
+                    lt.uv2 = emissiveSubMesh.uvs[emissiveSubMesh.indices[i + 2]];
                     emissiveTriangles.push_back(lt);
                     emissiveWeights.push_back(glm::length(glm::cross(lt.p1 - lt.p0, lt.p2 - lt.p0)) / 2.f * emissiveMaterials[emissiveSubMesh.mat]);
                 }

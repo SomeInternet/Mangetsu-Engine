@@ -45,6 +45,20 @@ struct Material {
     int emissionSamplerIdx;
 };
 
+struct PBR {
+    float4 color;
+    float2 metallicRoughness;
+    float transmissiveness;
+    float etaA;
+    float etaB;
+};
+
+struct LightSample {
+    float4 dir;
+    float3 radiance;
+    float pr;
+};
+
 struct AliasTableEntry {
     float threshold;
     uint32_t alias;
@@ -54,6 +68,10 @@ struct LightTriangle {
     float3 p0;
     float3 p1;
     float3 p2;
+    uint32_t matIdx;
+    half2 uv0;
+    half2 uv1;
+    half2 uv2;
 };
 
 struct SceneData {
@@ -86,21 +104,15 @@ struct PushConstantsPathtracer {
     float focusDist = 1.f;
 };
 
-struct MaterialParams {
-    float3 albedo;
-    float metallic;
-    float roughness;
-    float transmissiveness;
-    float etaA;
-    float etaB;
-};
-
 struct HitPayload {
     float3 throughput = {};
 
     //TODO: Add weight for RR?
     float3 rayOrigin = {};
     float3 rayDir = {};
+    float pdf = 0.f; //BSDF pdf of rayDir, or the light pdf of whatever was hit when the path ends on an emitter or the environment
+
+    float3 directLight = {}; //Light sampling contribution, not yet attenuated
 
     uint2 seed = 0;
 };
@@ -109,10 +121,6 @@ struct PointInfo {
     float3 nor = {};
     float3 tan = {};
     float2 uv = {};
-};
-
-enum BSDFLobe {
-    METALLIC, SPECULAR_REFL, DIFFUSE_REFL, SPECULAR_TRANS
 };
 
 //Helper functions
@@ -136,7 +144,7 @@ float rand() {
     seed += uint2(1);
     uint2 q = 1103515245U * ((seed >> 1U) ^ (seed.yx));
     uint n = 1103515245U * ((q.x) ^ (q.y >> 3U));
-    return float(n) * (1.0 / float(0xffffffffU));
+    return float(n >> 8) * (1.f / 16777216.f);
 }
 
 inline uint32_t sampleAliasTable(AliasTableEntry *aliasTable, uint32_t n, float rand1, float rand2) {
@@ -144,12 +152,22 @@ inline uint32_t sampleAliasTable(AliasTableEntry *aliasTable, uint32_t n, float 
     return (rand2 > entry.threshold) ? entry.alias : (uint32_t)(rand1 * n);
 }
 
-inline float3 sampleLightTriangle(LightTriangle lightTriangle, float2 xi, out float2 barycentrics) {
+//Uniformly samples a point on the triangle by area
+inline float3 sampleLightTriangle(LightTriangle lightTriangle, float2 xi, out float2 uv, out int matIdx, out float3 nor) {
     float s = sqrt(xi.x);
     float u = 1.f - s;
     float v = xi.y * s;
-    barycentrics = float2(u, v);
+    matIdx = lightTriangle.matIdx;
+    uv = float2(u * lightTriangle.uv0 + v * lightTriangle.uv1 + (1.f - u - v) * lightTriangle.uv2);
+    nor = normalize(cross(lightTriangle.p1 - lightTriangle.p0, lightTriangle.p2 - lightTriangle.p0));
     return u * lightTriangle.p0 + v * lightTriangle.p1 + (1.f - u - v) * lightTriangle.p2;
+}
+
+//Solid angle pdf of sampleLight landing on a point of an emissive triangle
+inline float triangleLightPdf(SceneData *sceneData, Material mat, float dist2, float cosLight) {
+    if (cosLight <= 0.f) return 0.f;
+    float power = (mat.emission.r + mat.emission.g + mat.emission.b) * mat.emission.w;
+    return power / (sceneData->totalEnvWeight + sceneData->totalLightWeight) * dist2 / cosLight;
 }
 
 inline PointInfo getPointInfo(uint subMeshIdx, uint primitiveIdx, float3 barycentrics, PushConstantsPathtracer pc, out float3 gNor) {
