@@ -125,6 +125,7 @@ void rayGeneration() {
         HitObject hitObject = HitObject::TraceRay(tlas, 0, 0xFF, 0, 0, 0, ray, payload);
         ReorderThread(hitObject);
         HitObject::Invoke<HitPayload>(tlas, hitObject, payload);
+        seed = payload.seed;
 
         if (hitObject.IsHit()) accumulatedLight += throughput * select(isnan(payload.directLight), float3(0.f), payload.directLight);
 
@@ -143,10 +144,18 @@ void rayGeneration() {
             throughput *= select(isnan(weight), float3(0.f), weight);
             prevBsdfPdf = payload.pdf;
         }
+
+        // RR
+        if (i > 2) {
+            float q = clamp(max(throughput.x, max(throughput.y, throughput.z)), .05f, 1.f);
+            if (rand() >= q) break;
+            throughput /= q;
+        }
+
         ray.Origin = payload.rayOrigin;
         ray.Direction = payload.rayDir;
 
-        seed = payload.seed;
+        
     }
 
     radianceImage[DispatchRaysIndex().xy] = radianceImage[DispatchRaysIndex().xy] * float(pc.frameNum) / float(pc.frameNum + 1) + 
@@ -235,6 +244,11 @@ void closestHit(inout HitPayload payload, in BuiltInTriangleIntersectionAttribut
     }
 
     float3 wo = -normalize(mulNor(pointInfo, mul(WorldToObject3x4(), float4(WorldRayDirection(), 0.f)).xyz));
+    if (wo.z < EPSILON) {
+        pointInfo.nor = gNor;
+        pointInfo.tan = normalize(pointInfo.tan - gNor * dot(pointInfo.tan, gNor));
+        wo = -normalize(mulNor(pointInfo, mul(WorldToObject3x4(), float4(WorldRayDirection(), 0.f)).xyz));
+    }
     float3 hitPos = WorldRayOrigin() + WorldRayDirection() * RayTCurrent();
     float3 worldNor = normalize(mul(ObjectToWorld3x4(), float4(mulNorTranspose(pointInfo, float3(0.f, 0.f, 1.f)), 0.f)));
 

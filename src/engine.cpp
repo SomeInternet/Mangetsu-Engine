@@ -877,7 +877,7 @@ void Engine::init() {
 	_loaded = true;
 
 	//Load default scene
-	std::string path = "./models/bistro.glb";
+	std::string path = "./models/living_room.glb";
 	loadScene(path);
 
 	initPipelinePathtracer();

@@ -1,10 +1,16 @@
 # Third-party dependencies.
 #
 # glm, SDL, imgui, vk-bootstrap and tinygltf are git submodules; stb is a submodule of
-# loose headers. Vulkan itself is not vendored -- it comes from the installed SDK
-# and is located by find_package(Vulkan) in the root CMakeLists.
+# loose headers, and DLSS one of headers plus prebuilt binaries. Vulkan itself is
+# not vendored -- it comes from the installed SDK and is located by
+# find_package(Vulkan) in the root CMakeLists.
 
-foreach(dep IN ITEMS glm SDL imgui vk-bootstrap VulkanMemoryAllocator tinygltf stb)
+set(MANGETSU_SUBMODULES glm SDL imgui vk-bootstrap VulkanMemoryAllocator tinygltf stb)
+if(MANGETSU_DLSS)
+    list(APPEND MANGETSU_SUBMODULES DLSS)
+endif()
+
+foreach(dep IN LISTS MANGETSU_SUBMODULES)
     if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${dep}/.git)
         message(FATAL_ERROR
             "third-party/${dep} is empty. The dependencies are git submodules; run:\n"
@@ -121,6 +127,58 @@ target_compile_definitions(tinygltf PRIVATE
     TINYGLTF_NO_INCLUDE_STB_IMAGE_WRITE
 )
 target_link_libraries(tinygltf PUBLIC stb)
+
+# --- DLSS -------------------------------------------------------------------
+# Pinned to v310.9.1 (DLSS 4.5). The NGX SDK ships no build system, just headers,
+# a prebuilt static import library, and the per-feature runtime DLLs that it
+# loads on demand:
+#   nvngx_dlssd.dll  Ray Reconstruction (denoise + upscale; what a path tracer wants)
+#   nvngx_dlss.dll   Super Resolution
+#   nvngx_dlssg.dll  Frame Generation -- not copied: it also needs the app to pace
+#                    presentation itself, which the engine does not do.
+#
+# The repo is large (~1.4 GB: every platform's DLLs, dev and rel), hence
+# shallow = true in .gitmodules.
+if(MANGETSU_DLSS)
+    if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+        message(FATAL_ERROR
+            "DLSS is only set up for 64-bit Windows here. Configure with "
+            "-DMANGETSU_DLSS=OFF, or add the lib/Linux_x86_64 paths below.")
+    endif()
+
+    if(NOT MANGETSU_DLSS_DLL_FLAVOR MATCHES "^(dev|rel)$")
+        message(FATAL_ERROR "MANGETSU_DLSS_DLL_FLAVOR must be dev or rel, not '${MANGETSU_DLSS_DLL_FLAVOR}'")
+    endif()
+
+    set(MANGETSU_DLSS_DIR     ${CMAKE_CURRENT_SOURCE_DIR}/DLSS)
+    set(MANGETSU_DLSS_LIB_DIR ${MANGETSU_DLSS_DIR}/lib/Windows_x86_64)
+
+    # nvsdk_ngx comes in one variant per MSVC runtime, and each stamps its
+    # runtime and _ITERATOR_DEBUG_LEVEL into the object files, so linking the
+    # wrong one fails with LNK2038. CMake's default runtime is /MDd (iterator
+    # level 2) for Debug and /MD (level 0) for everything else, which is _d_dbg
+    # and _d respectively. If the engine ever switches to the static CRT
+    # (MSVC_RUNTIME_LIBRARY), these become nvsdk_ngx_s_dbg / nvsdk_ngx_s.
+    #
+    # An INTERFACE library rather than an IMPORTED one, so the per-config choice
+    # can be a generator expression instead of four IMPORTED_LOCATION_<CONFIG>s.
+    add_library(dlss INTERFACE)
+    target_link_libraries(dlss INTERFACE
+        $<IF:$<CONFIG:Debug>,${MANGETSU_DLSS_LIB_DIR}/x64/nvsdk_ngx_d_dbg.lib,${MANGETSU_DLSS_LIB_DIR}/x64/nvsdk_ngx_d.lib>
+        # The _vk headers use Vulkan types but do not include vulkan.h themselves.
+        Vulkan::Vulkan
+    )
+    # SYSTEM keeps the engine's /W4 from reporting warnings in NVIDIA's headers.
+    target_include_directories(dlss SYSTEM INTERFACE ${MANGETSU_DLSS_DIR}/include)
+    target_compile_definitions(dlss INTERFACE MANGETSU_DLSS)
+
+    # The root CMakeLists copies these next to the executable after each build.
+    set(MANGETSU_DLSS_RUNTIME_DLLS
+        ${MANGETSU_DLSS_LIB_DIR}/${MANGETSU_DLSS_DLL_FLAVOR}/nvngx_dlssd.dll
+        ${MANGETSU_DLSS_LIB_DIR}/${MANGETSU_DLSS_DLL_FLAVOR}/nvngx_dlss.dll
+        PARENT_SCOPE
+    )
+endif()
 
 # ---------------------------------------------------------------------------
 # Solution Explorer grouping

@@ -59,7 +59,18 @@ set_property(GLOBAL PROPERTY PREDEFINED_TARGETS_FOLDER "CMake")
 # Vulkan comes from the installed SDK (FindVulkan reads $ENV{VULKAN_SDK}).
 find_package(Vulkan REQUIRED)
 
-# glm, SDL, imgui, vk-bootstrap, tinygltf and stb live under third-party/.
+# NVIDIA DLSS (NGX SDK): Ray Reconstruction, the denoise + upscale model meant for
+# path tracers, plus Super Resolution. Turning this off drops the dependency
+# entirely, for machines without the submodule or an RTX GPU to test on.
+option(MANGETSU_DLSS "Build with NVIDIA DLSS (Ray Reconstruction / Super Resolution)" ON)
+
+# NVIDIA ships two builds of each feature DLL. "dev" is for integrating: it draws
+# an on-screen watermark and has the debug overlay (Ctrl+Alt+F12) for inspecting
+# the guide buffers. "rel" is the production build with neither.
+set(MANGETSU_DLSS_DLL_FLAVOR dev CACHE STRING "Which DLSS runtime DLLs to copy next to the exe (dev or rel)")
+set_property(CACHE MANGETSU_DLSS_DLL_FLAVOR PROPERTY STRINGS dev rel)
+
+# glm, SDL, imgui, vk-bootstrap, tinygltf, stb and DLSS live under third-party/.
 add_subdirectory(third-party)
 
 # ---------------------------------------------------------------------------
@@ -164,6 +175,23 @@ target_link_libraries(Mangetsu-Engine
         tinygltf
         stb
 )
+
+if(MANGETSU_DLSS)
+    # The dlss target also defines MANGETSU_DLSS for the engine's sources, so
+    # DLSS code can be compiled out with #ifdef when the option is off.
+    target_link_libraries(Mangetsu-Engine PRIVATE dlss)
+
+    # nvsdk_ngx only loads the feature DLLs at runtime, and looks for them next
+    # to the executable -- not in the debugger's working directory, which is the
+    # repo root. copy_if_different keeps this cheap on incremental builds even
+    # though the DLLs are large.
+    add_custom_command(TARGET Mangetsu-Engine POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${MANGETSU_DLSS_RUNTIME_DLLS} $<TARGET_FILE_DIR:Mangetsu-Engine>
+        COMMENT "Copying DLSS runtime DLLs (${MANGETSU_DLSS_DLL_FLAVOR})"
+        VERBATIM
+    )
+endif()
 
 target_compile_definitions(Mangetsu-Engine
     PRIVATE
