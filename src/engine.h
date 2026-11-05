@@ -50,6 +50,13 @@ constexpr int N_SAMPLER_DESCRIPTORS = 256;
 
 constexpr int MAX_BOUNCES = 10;
 
+//FOR DLSS
+constexpr const char *PROJECT_ID = "9b0b45b1-6bdf-4aa8-a558-12cbd89a45a5";
+constexpr const char *PROJECT_VERSION = "0.1.0";
+
+struct NVSDK_NGX_Parameter;
+struct NVSDK_NGX_Handle;
+
 class Engine {
 private:
 	bool _loaded{ false };
@@ -135,6 +142,12 @@ private:
 
 	AllocatedBuffer _envAliasTable;
 
+	//For DLSS
+	NVSDK_NGX_Parameter *_ngxParams{ nullptr };
+	NVSDK_NGX_Handle *_ngxRrHandle{ nullptr };
+	VkExtent2D _renderExtent{};
+	bool _rrAvailable{ false };
+
 	//Deletion queue to handle object destruction
 	//TODO: VkGuide, from which I got this implementation, mentioned a better way to do it, so that's something I might want to look into
 	DeletionQueue _deletionQueue;
@@ -151,6 +164,9 @@ private:
 
 	void initCommandResources();
 	void initSyncStructures();
+
+	void createRrFeature();
+	void updateRrRenderExtent();
 
 	void initDescriptorHeaps();
 
@@ -171,7 +187,8 @@ private:
 
 	void resize();
 
-	int _frameNum{ 0 };
+	uint32_t _totalFrames{ 0 };
+	uint32_t _frameNum{ 0 };
 	bool _resize{ false };
 	bool _minimized{ false };
 

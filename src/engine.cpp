@@ -5,6 +5,11 @@
 #include <vk_mem_alloc.h>
 #include <format>
 
+#include <nvsdk_ngx_vk.h>
+#include <nvsdk_ngx_helpers_vk.h>
+#include <nvsdk_ngx_helpers_dlssd_vk.h>
+#include <nvsdk_ngx_helpers_dlssd_d3d.h>
+
 #include "engine.h"
 #include "init.h"
 #include "loader.h"
@@ -152,6 +157,25 @@ void Engine::initVulkan() {
 		_physicalDevice = _vkbData.physicalDevice.physical_device;
 	}
 
+	//Query NGX extensions for DLSS
+	NVSDK_NGX_FeatureDiscoveryInfo ngxInfo{};
+	ngxInfo.SDKVersion = NVSDK_NGX_Version_API;
+	ngxInfo.FeatureID = NVSDK_NGX_Feature_RayReconstruction;
+	ngxInfo.Identifier.IdentifierType = NVSDK_NGX_Application_Identifier_Type_Project_Id;
+	ngxInfo.Identifier.v.ProjectDesc = { PROJECT_ID, NVSDK_NGX_ENGINE_TYPE_CUSTOM, PROJECT_VERSION };
+	ngxInfo.ApplicationDataPath = L"./build/ngx";
+
+	uint32_t ngxExtensionCount = 0;
+	VkExtensionProperties *ngxExtensionProperties = nullptr;
+
+	NVSDK_NGX_Result ngxResult = NVSDK_NGX_VULKAN_GetFeatureDeviceExtensionRequirements(_instance, _physicalDevice, &ngxInfo, 
+		&ngxExtensionCount, &ngxExtensionProperties);
+	std::vector<const char*> ngxExtensionNames;
+	for (uint32_t i = 0; i < ngxExtensionCount; ++i) {
+		ngxExtensionNames.push_back(ngxExtensionProperties[i].extensionName);
+	}
+	_vkbData.physicalDevice.enable_extensions_if_present(ngxExtensionNames);
+
 	{
 		_deviceProperties.properties.pNext = &_deviceProperties.rtProperties;
 		_deviceProperties.rtProperties.pNext = &_deviceProperties.asProperties;
@@ -176,6 +200,46 @@ void Engine::initVulkan() {
 		if (!(_vkbData.device.queue_families[_queueFamilyIdx].queueFlags & VK_QUEUE_COMPUTE_BIT)) throw std::runtime_error("Selected queue family doesn't support compute!");
 		if(presentQueueFamilyIdx != _queueFamilyIdx) throw std::runtime_error("Selected queue family doesn't support present!");
 	}
+
+	NVSDK_NGX_VULKAN_Init_with_ProjectID(PROJECT_ID, NVSDK_NGX_ENGINE_TYPE_CUSTOM, PROJECT_VERSION, L"./build/ngx",
+		_instance, _physicalDevice, _device, vkGetInstanceProcAddr, vkGetDeviceProcAddr);
+	bool paramsLoaded = NVSDK_NGX_SUCCEED(NVSDK_NGX_VULKAN_GetCapabilityParameters(&_ngxParams));
+
+	int denoisingAvailable = 0;
+	auto result = _ngxParams->Get(NVSDK_NGX_Parameter_SuperSamplingDenoising_Available, &denoisingAvailable);
+
+	_rrAvailable = static_cast<bool>(denoisingAvailable);
+
+	if (NVSDK_NGX_SUCCEED(result) && denoisingAvailable) {
+		//TODO: Enable ray reconstruction
+		_rrAvailable = true;
+	}
+	else if (NVSDK_NGX_SUCCEED(result) && !denoisingAvailable) {
+		//TODO: Add more debug messages here
+		std::cout << "DLSS Denoising unavailable on this device!" << std::endl;
+
+		int needsUpdatedDriver = 0;
+		NVSDK_NGX_Result resultUpdatedDriver = _ngxParams->Get(NVSDK_NGX_Parameter_SuperSampling_NeedsUpdatedDriver, &needsUpdatedDriver);
+
+		int minDriverVersionMajor, minDriverVersionMinor = 0;
+
+		NVSDK_NGX_Result ResultMinDriverVersionMajor = _ngxParams->Get(NVSDK_NGX_Parameter_SuperSampling_MinDriverVersionMajor, &minDriverVersionMajor);
+		NVSDK_NGX_Result ResultMinDriverVersionMinor = _ngxParams->Get(NVSDK_NGX_Parameter_SuperSampling_MinDriverVersionMinor, &minDriverVersionMinor);
+
+		if (NVSDK_NGX_SUCCEED(resultUpdatedDriver) && needsUpdatedDriver) {
+			std::cout << "Outdated driver!" << std::endl;
+
+			if (NVSDK_NGX_SUCCEED(ResultMinDriverVersionMajor) && NVSDK_NGX_SUCCEED(ResultMinDriverVersionMinor)) {
+				std::cout << "Mininimum driver version required: " << minDriverVersionMajor << "." << minDriverVersionMinor << std::endl;
+			}
+		}
+	}
+
+	if (paramsLoaded) _deletionQueue.push([this]() {
+		if (_rrAvailable) NVSDK_NGX_VULKAN_ReleaseFeature(_ngxRrHandle);
+		NVSDK_NGX_VULKAN_DestroyParameters(_ngxParams);
+		NVSDK_NGX_VULKAN_Shutdown1(_device);
+		});
 }
 
 void Engine::createSwapChain(int width, int height) {
@@ -323,6 +387,20 @@ void Engine::initSyncStructures() {
 
 		vkDestroyFence(_device, _immFence, nullptr);
 		});
+}
+
+void Engine::createRrFeature() {
+
+}
+
+void Engine::updateRrRenderExtent() {
+	uint32_t optWidth, optHeight, minWidth, minHeight, maxWidth, maxHeight = 0;
+	float sharpness = 0.f;
+
+	NGX_DLSS_GET_OPTIMAL_SETTINGS(_ngxParams, _vkbData.swapChain.extent.width, _vkbData.swapChain.extent.height, NVSDK_NGX_PerfQuality_Value_MaxPerf,
+		&optWidth, &optHeight, &maxWidth, &maxHeight, &minWidth, &minHeight, &sharpness);
+	_renderExtent.width = optWidth;
+	_renderExtent.height = optHeight;
 }
 
 void Engine::initDescriptorHeaps() {
@@ -757,6 +835,7 @@ void Engine::draw() {
 	_pcpt.frameNum = _frameNum;
 	_pcpt.tlas = _scene.tlas.address;
 	_pcpt.sceneData = _sceneDataBuffer.address;
+	_pcpt.totalFrames = _totalFrames;
 
 	vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _pipelinePathtracer);
 
@@ -821,6 +900,7 @@ void Engine::draw() {
 		_resize = true;
 		return;
 	}
+	++_totalFrames;
 	++_frameNum;
 }
 
@@ -877,7 +957,7 @@ void Engine::init() {
 	_loaded = true;
 
 	//Load default scene
-	std::string path = "./models/living_room.glb";
+	std::string path = "./models/cornellbox_transmission.glb";
 	loadScene(path);
 
 	initPipelinePathtracer();

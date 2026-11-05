@@ -2,6 +2,8 @@
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 
+#include "util.h"
+
 struct SceneData {
 	VkDeviceAddress deviceSubMeshes;
 	VkDeviceAddress materials;
@@ -25,11 +27,14 @@ struct PushConstantsPathtracer {
 	VkDeviceAddress sceneData;
 
 	float fov;
-	uint32_t frameNum;
+	uint32_t totalFrames{ 0 };
+	uint32_t frameNum{ 0 };
 	uint32_t maxBounces{ 10 };
 
 	float lensRadius{ 0.f };
 	float focusDist{ 1.f };
+
+	EngineStateFlags flags{ 0 };
 };
 
 struct PushConstantsPost {

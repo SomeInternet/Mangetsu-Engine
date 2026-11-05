@@ -65,3 +65,8 @@ namespace util {
 	//Rounds v up to the next power of a. Used to align an offset with an alignment (which will be a power of 2)
 	constexpr VkDeviceSize alignUp(VkDeviceSize v, VkDeviceSize a) { return (v + a - 1) & ~(a - 1); }
 };
+
+enum EngineStateFlags: uint32_t {
+	IBL = 1 << 0,
+	RAY_RECONSTRUCTION = 1 << 1,
+};

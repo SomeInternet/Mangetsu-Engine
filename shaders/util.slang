@@ -87,6 +87,11 @@ struct SceneData {
     float totalEnvWeight = 0.f;
 };
 
+enum EngineStateFlags : uint32_t {
+    IBL = 1 << 0,
+    RAY_RECONSTRUCTION = 1 << 1,
+};
+
 struct PushConstantsPathtracer {
     float3 camPos;
     float3 camForward;
@@ -97,11 +102,14 @@ struct PushConstantsPathtracer {
     SceneData *sceneData;
 
     float fov;
+    uint32_t totalFrames;
     uint32_t frameNum;
     uint32_t maxBounces;
 
     float lensRadius = 0.f;
     float focusDist = 1.f;
+
+    EngineStateFlags flags;
 };
 
 struct HitPayload {
@@ -137,6 +145,14 @@ float3 fromOctahedral(half2 u) {
 
     return normalize(v);
 }
+
+uint32_t pcg(uint32_t x) {
+    uint32_t state = x * 747796405 + 2891336453;
+    uint32_t word = (state >> ((state >> 28) + 4) ^ state) * 277803737;
+    return (word >> 22) ^ word;
+}
+
+uint2 pcg2(uint2 v) { return uint2(pcg(v.x), pcg(v.y)); }
 
 //From ShaderToy https://www.shadertoy.com/view/4tXyWN
 static uint2 seed;

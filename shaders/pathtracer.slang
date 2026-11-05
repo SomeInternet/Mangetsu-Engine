@@ -93,7 +93,7 @@ inline bool shadowRayCast(float3 origin, float3 dir, float tMax) {
 
 [shader("raygeneration")]
 void rayGeneration() {
-    seed = DispatchRaysIndex().xy * uint2(1973, 9277) + pc.frameNum * uint2(26699, 7919);
+    seed = pcg2(DispatchRaysIndex().xy) ^ pcg(pc.totalFrames);
 
     float2 samplePos = (float2)DispatchRaysIndex().xy;
     float2 imageSize = (float2)DispatchRaysDimensions().xy;
@@ -154,12 +154,15 @@ void rayGeneration() {
 
         ray.Origin = payload.rayOrigin;
         ray.Direction = payload.rayDir;
-
-        
     }
 
-    radianceImage[DispatchRaysIndex().xy] = radianceImage[DispatchRaysIndex().xy] * float(pc.frameNum) / float(pc.frameNum + 1) + 
-    float4(accumulatedLight, 1.f) * 1.f / float(pc.frameNum + 1);
+    if (pc.flags & EngineStateFlags::RAY_RECONSTRUCTION) {
+        radianceImage[DispatchRaysIndex().xy] = radianceImage[DispatchRaysIndex().xy] * float(pc.frameNum) / float(pc.frameNum + 1) +
+            float4(accumulatedLight, 1.f) * 1.f / float(pc.frameNum + 1);
+    } else {
+        radianceImage[DispatchRaysIndex().xy] = radianceImage[DispatchRaysIndex().xy] * float(pc.frameNum) / float(pc.frameNum + 1) +
+            float4(accumulatedLight, 1.f) * 1.f / float(pc.frameNum + 1);
+    }
 }
 
 [shader("closesthit")]
