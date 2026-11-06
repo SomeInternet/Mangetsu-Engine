@@ -5,6 +5,27 @@
 [vk::binding(0, 0)]
 RWTexture2D<float4> radianceImage;
 
+[vk::binding(0, 1)]
+RWTexture2D<float4> diffuseAlbedoImage;
+
+[vk::binding(0, 2)]
+RWTexture2D<float4> specularAlbedoImage;
+
+[vk::binding(0, 3)]
+RWTexture2D<float4> normalRoughnessImage;
+
+[vk::binding(0, 4)]
+RWTexture2D<float4> depthImage;
+
+[vk::binding(0, 5)]
+RWTexture2D<float4> motionVectorImage;
+
+[vk::binding(0, 6)]
+RWTexture2D<float4> specHitDistImage;
+
+[vk::binding(0, 7)]
+RWTexture2D<float4> dlssOutputImage;
+
 [vk::binding(1, 0)] //TODO: Change this if you change the max number of swap chain images
 Texture2D<float4> sceneImages[];
 
@@ -242,6 +263,7 @@ void closestHit(inout HitPayload payload, in BuiltInTriangleIntersectionAttribut
         }
 
         pbr.transmissiveness = material.transmissiveness;
+        if (material.transmissiveness == 0.f) entering = true;
         pbr.etaA = entering ? 1.f : material.ior;
         pbr.etaB = entering ? material.ior : 1.f;
     }

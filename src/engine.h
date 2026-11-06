@@ -43,7 +43,16 @@ constexpr int HEIGHT = 1080;
 constexpr int MAX_SWAPCHAIN_SIZE = 4;
 constexpr int FRAMES_IN_FLIGHT = 3;
 
-constexpr int ENGINE_IMAGES = 1;
+//0: radiance image
+//1: diffuse albedo
+//2: specular albedo
+//3: normal-roughness
+//4: view-depth
+//5: motion vectors
+//6: specular hit distance
+//7: dlss output
+//8: TODO: post
+constexpr int ENGINE_IMAGES = 9;
 constexpr int HDR_IMAGES = 1;
 constexpr int N_IMAGE_DESCRIPTORS = 4096;
 constexpr int N_SAMPLER_DESCRIPTORS = 256;
@@ -148,6 +157,26 @@ private:
 	VkExtent2D _renderExtent{};
 	bool _rrAvailable{ false };
 
+	AllocatedImage _diffuseAlbedoImage;
+	AllocatedImage _specularAlbedoImage;
+	AllocatedImage _normalRoughnessImage;
+	AllocatedImage _viewDepthImage;
+	AllocatedImage _motionVectorImage;
+	AllocatedImage _specHitDistImage;
+	AllocatedImage _dlssOutputImage;
+	AllocatedImage _postInputImage;
+
+	VkImageViewCreateInfo _diffuseAlbedoImageInfo{};
+	VkImageViewCreateInfo _specularAlbedoImageInfo{};
+	VkImageViewCreateInfo _normalRoughnessImageInfo{};
+	VkImageViewCreateInfo _viewDepthImageInfo{};
+	VkImageViewCreateInfo _motionVectorImageInfo{};
+	VkImageViewCreateInfo _specHitDistImageInfo{};
+	VkImageViewCreateInfo _dlssOutputImageInfo{};
+	VkImageViewCreateInfo _postInputImageInfo{};
+
+	//TODO: Allocate images for ORCA/SHaRC here
+
 	//Deletion queue to handle object destruction
 	//TODO: VkGuide, from which I got this implementation, mentioned a better way to do it, so that's something I might want to look into
 	DeletionQueue _deletionQueue;
@@ -162,11 +191,15 @@ private:
 	void createRadianceImage();
 	void initRadianceImageDescriptors();
 
+	void createDLSSImages();
+	void destroyDLSSImages();
+	void initDLSSImageDescriptors();
+
 	void initCommandResources();
 	void initSyncStructures();
 
-	void createRrFeature();
-	void updateRrRenderExtent();
+	void createDLSSFeature();
+	void updateRenderExtent();
 
 	void initDescriptorHeaps();
 

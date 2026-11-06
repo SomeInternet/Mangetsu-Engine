@@ -310,9 +310,9 @@ void Engine::initSwapChainDescriptors() {
 }
 
 void Engine::createRadianceImage() {
-	VkExtent3D extent = VkExtent3D(_swapChainExtent.width, _swapChainExtent.height, 1);
+	VkExtent3D extent = VkExtent3D(_renderExtent.width, _renderExtent.height, 1);
 
-	_radianceImage = _allocator.createImage(extent, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT, 
+	_radianceImage = _allocator.createImage(extent, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
 		false, &_radianceImageViewCreateInfo);
 
 	_allocator.immediateSubmit([&](VkCommandBuffer commandBuffer) {
@@ -322,6 +322,41 @@ void Engine::createRadianceImage() {
 
 void Engine::initRadianceImageDescriptors() {
 	writeImageDescriptor(0, _radianceImageViewCreateInfo, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_IMAGE_LAYOUT_GENERAL);
+	_allocator.flush(_imageHeap);
+}
+
+void Engine::createDLSSImages() {
+	VkExtent3D extent = VkExtent3D(_renderExtent.width, _renderExtent.height, 1);
+	
+	_diffuseAlbedoImage = _allocator.createImage(extent, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, false, &_diffuseAlbedoImageInfo);
+	_specularAlbedoImage = _allocator.createImage(extent, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, false, &_specularAlbedoImageInfo);
+	_normalRoughnessImage = _allocator.createImage(extent, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, false, &_normalRoughnessImageInfo);
+	_viewDepthImage = _allocator.createImage(extent, VK_FORMAT_R16_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, false, &_viewDepthImageInfo);
+	_motionVectorImage = _allocator.createImage(extent, VK_FORMAT_R32G32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, false, &_motionVectorImageInfo);
+	_specHitDistImage = _allocator.createImage(extent, VK_FORMAT_R16_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, false, &_specHitDistImageInfo);
+	_dlssOutputImage = _allocator.createImage(extent, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, false, &_dlssOutputImageInfo);
+	//TODO: Create additional images for DLSS (might want too look into the depth of field guide)
+}
+
+void Engine::destroyDLSSImages() {
+	_allocator.destroyImage(_diffuseAlbedoImage);
+	_allocator.destroyImage(_specularAlbedoImage);
+	_allocator.destroyImage(_normalRoughnessImage);
+	_allocator.destroyImage(_viewDepthImage);
+	_allocator.destroyImage(_motionVectorImage);
+	_allocator.destroyImage(_specHitDistImage);
+	_allocator.destroyImage(_dlssOutputImage);
+	//_allocator.destroyImage(_postInputImage);
+}
+
+void Engine::initDLSSImageDescriptors() {
+	writeImageDescriptor(1, _diffuseAlbedoImageInfo, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_IMAGE_LAYOUT_GENERAL);
+	writeImageDescriptor(2, _specularAlbedoImageInfo, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_IMAGE_LAYOUT_GENERAL);
+	writeImageDescriptor(3, _normalRoughnessImageInfo, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_IMAGE_LAYOUT_GENERAL);
+	writeImageDescriptor(4, _viewDepthImageInfo, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_IMAGE_LAYOUT_GENERAL);
+	writeImageDescriptor(5, _motionVectorImageInfo, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_IMAGE_LAYOUT_GENERAL);
+	writeImageDescriptor(6, _specHitDistImageInfo, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_IMAGE_LAYOUT_GENERAL);
+	writeImageDescriptor(7, _dlssOutputImageInfo, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_IMAGE_LAYOUT_GENERAL);
 	_allocator.flush(_imageHeap);
 }
 
@@ -389,11 +424,11 @@ void Engine::initSyncStructures() {
 		});
 }
 
-void Engine::createRrFeature() {
-
+void Engine::createDLSSFeature() {
+	//TODO
 }
 
-void Engine::updateRrRenderExtent() {
+void Engine::updateRenderExtent() {
 	uint32_t optWidth, optHeight, minWidth, minHeight, maxWidth, maxHeight = 0;
 	float sharpness = 0.f;
 
@@ -401,6 +436,11 @@ void Engine::updateRrRenderExtent() {
 		&optWidth, &optHeight, &maxWidth, &maxHeight, &minWidth, &minHeight, &sharpness);
 	_renderExtent.width = optWidth;
 	_renderExtent.height = optHeight;
+
+#if _DEBUG
+	std::cout << "Render Extent: (" << _renderExtent.width << ", " << _renderExtent.height << ")" << std::endl;
+	std::cout << "Swapchain Extent: (" << _swapChainExtent.width << ", " << _swapChainExtent.height << ")" << std::endl;
+#endif
 }
 
 void Engine::initDescriptorHeaps() {
@@ -844,7 +884,7 @@ void Engine::draw() {
 	pushDataPt.data = { &_pcpt, sizeof(PushConstantsPathtracer) };
 	
 	_dispatchTable.cmdPushDataEXT(commandBuffer, &pushDataPt);
-	_dispatchTable.cmdTraceRaysKHR(commandBuffer, &_rayGenerationRegion, &_missRegion, &_hitRegion, &_callRegion, _swapChainExtent.width, _swapChainExtent.height, 1);
+	_dispatchTable.cmdTraceRaysKHR(commandBuffer, &_rayGenerationRegion, &_missRegion, &_hitRegion, &_callRegion, _renderExtent.width, _renderExtent.height, 1);
 
 	//Transition the swap chain image layout for writing from the post process compute
 	util::transitionImageLayout(commandBuffer, _swapChainImages[swapChainImageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
@@ -920,9 +960,15 @@ void Engine::resize() {
 	initSwapChainDescriptors();
 
 	//Destroy and recreate the radiance image
+	updateRenderExtent();
 	_allocator.destroyImage(_radianceImage);
 	createRadianceImage();
 	initRadianceImageDescriptors();
+
+	//Destroy and recreate the DLSS images
+	destroyDLSSImages();
+	createDLSSImages();
+	initDLSSImageDescriptors();
 
 	_frameNum = 0;
 	_resize = false;
@@ -947,12 +993,15 @@ void Engine::init() {
 	_allocator.init(_instance, _physicalDevice, _device);
 	_allocator.setCommandInfo(_queue, _immCommandBuffer, _immFence);
 
+	updateRenderExtent();
 	createRadianceImage();
+	createDLSSImages();
 	initDescriptorHeaps();
 
 	loadHdrImage("./hdrs/kloofendal_48d_partly_cloudy_puresky_4k.hdr");
 	initSwapChainDescriptors();
 	initRadianceImageDescriptors();
+	initDLSSImageDescriptors();
 
 	_loaded = true;
 
@@ -1014,6 +1063,7 @@ void Engine::cleanup() {
 		if (_envAliasTable.loaded) _allocator.destroyBuffer(_envAliasTable);
 
 		destroySwapChain();
+		destroyDLSSImages();
 		if (_hdrLoaded) _allocator.destroyImage(_hdrImage);
 		_allocator.destroyImage(_radianceImage);
 
